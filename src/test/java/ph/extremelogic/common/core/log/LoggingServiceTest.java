@@ -55,17 +55,6 @@ class LoggingServiceTest {
         instanceField.set(null, null);
     }
 
-    //@Test
-    //@DisplayName("Should initialize LoggingService correctly")
-    //void testInitialization() {
-    //    LoggingService.init(true, testLogFile, LogLevel.DEBUG);
-    //    LoggingService service = LoggingService.getInstance();
-
-    //    assertTrue(service.isEnabled());
-    //    assertEquals(testLogFile, service.getLogFileName());
-    //    assertEquals(LogLevel.DEBUG, service.getMinimumLevel());
-    //}
-
     @Test
     @DisplayName("Should use INFO as default minimum level")
     void testInitializationWithDefaultLevel() {

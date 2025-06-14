@@ -175,7 +175,6 @@
                 <configuration>
                     <!-- Optional: only include if using a specific key -->
                     <!-- <keyname>90299062AC585F84083965CA498B7972198A6A95</keyname> -->
-                    <gpgExecutable>gpg</gpgExecutable>
                 </configuration>
             </plugin>
 

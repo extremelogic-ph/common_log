@@ -1,4 +1,4 @@
-package ph.extremelogic.common.core.log;
+package ph.extremelogic.common.core.log.appender;
 
 import java.io.IOException;
 

@@ -12,6 +12,13 @@
     <url>https:\\www.extremelogic.ph</url>
     <description>Logger</description>
 
+    <!-- SCM (Source Code Management) configuration -->
+    <scm>
+        <connection>scm:git:https://github.com/extremelogic-ph/common_log.git</connection>
+        <developerConnection>scm:git:ssh://github.com/extremelogic-ph/common_log.git</developerConnection>
+        <url>https://github.com/extremelogic-ph/common_log</url>
+    </scm>
+
     <properties>
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>

@@ -66,7 +66,7 @@ public class LoggingService {
             try {
                 // Test if we can write to the file
                 try (PrintWriter writer = new PrintWriter(new FileWriter(logFileName, true))) {
-                    writer.println(""); // Just test write access
+                    writer.print(""); // Just test write access
                 }
                 loggerInitialized = true;
 

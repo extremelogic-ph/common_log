@@ -138,6 +138,38 @@
             </plugin>
 
             <!--
+            Signs the artifacts (jar, pom, source, javadoc) before they are deployed.
+            Uses your GPG key that must already be configured on your system.
+            Maven looks for the GPG passphrase from:
+              an environment variable (GPG_PASSPHRASE)
+              or via settings.xml
+            You must have a published GPG key in a public key server (e.g. keyserver.ubuntu.com)
+            and synced with your Sonatype account.
+
+            May need to specify passphrase if there are multiple entries:
+              mvn deploy -Dgpg.passphrase=your-secret
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-gpg-plugin</artifactId>
+                <version>3.2.4</version>
+                <executions>
+                    <execution>
+                        <id>sign-artifacts</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>sign</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <!-- Optional: only include if using a specific key -->
+                    <!-- <keyname>90299062AC585F84083965CA498B7972198A6A95</keyname> -->
+                    <gpgExecutable>gpg</gpgExecutable>
+                </configuration>
+            </plugin>
+
+            <!--
             Uploads artifacts to a repository (e.g. Sonatype OSSRH).
             Uses settings.xml:
 

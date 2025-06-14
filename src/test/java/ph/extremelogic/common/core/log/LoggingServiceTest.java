@@ -10,11 +10,10 @@ import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.Set;
+import java.util.concurrent.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -304,5 +303,126 @@ class LoggingServiceTest {
 
             assertTrue(logLine.matches("\\[\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\] INFO  \\[TestLogger\\] - Test message"));
         }
+    }
+    @Test
+    @DisplayName("Should handle high-concurrency logging without data corruption")
+    void testHighConcurrencyLogging() throws InterruptedException, IOException {
+        LoggingService.init(true, testLogFile, LoggingService.LogLevel.INFO);
+
+        int threadCount = 50;
+        int messagesPerThread = 100;
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch completionLatch = new CountDownLatch(threadCount);
+
+        Set<String> expectedMessages = ConcurrentHashMap.newKeySet();
+
+        for (int i = 0; i < threadCount; i++) {
+            final int threadId = i;
+            executor.submit(() -> {
+                try {
+                    startLatch.await(); // Wait for all threads to be ready
+                    LoggingService.Logger logger = LoggingService.getLogger("Thread-" + threadId);
+                    for (int j = 0; j < messagesPerThread; j++) {
+                        String message = String.format("Thread-%d-Message-%d", threadId, j);
+                        expectedMessages.add(message);
+                        logger.info(message);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    completionLatch.countDown();
+                }
+            });
+        }
+
+        startLatch.countDown(); // Start all threads simultaneously
+        assertTrue(completionLatch.await(30, TimeUnit.SECONDS));
+        executor.shutdown();
+
+        // Verify all messages were written
+        String fileContent = Files.readString(Path.of(testLogFile));
+        for (String expectedMessage : expectedMessages) {
+            assertTrue(fileContent.contains(expectedMessage), "Missing message: " + expectedMessage);
+        }
+    }
+
+    @Test
+    @DisplayName("Should maintain acceptable performance under load")
+    void testLoggingPerformance() {
+        LoggingService.init(true, testLogFile, LoggingService.LogLevel.INFO);
+        LoggingService.Logger logger = LoggingService.getLogger("PerformanceTest");
+
+        int messageCount = 10000;
+        long startTime = System.nanoTime();
+
+        for (int i = 0; i < messageCount; i++) {
+            logger.info("Performance test message %d", i);
+        }
+
+        long endTime = System.nanoTime();
+        long durationMs = (endTime - startTime) / 1_000_000;
+
+        // Should be able to log 10,000 messages in under 5 seconds
+        assertTrue(durationMs < 5000, "Logging took too long: " + durationMs + "ms");
+
+        // Calculate messages per second
+        double messagesPerSecond = messageCount / (durationMs / 1000.0);
+        System.out.println("Logging performance: " + messagesPerSecond + " messages/second");
+    }
+
+    @Test
+    @DisplayName("Should handle null and empty parameters gracefully")
+    void testNullAndEmptyParameters() {
+        LoggingService.init(true, testLogFile, LoggingService.LogLevel.INFO);
+        LoggingService.Logger logger = LoggingService.getLogger("TestLogger");
+
+        // These should not throw exceptions
+        assertDoesNotThrow(() -> logger.info(null));
+        assertDoesNotThrow(() -> logger.info(""));
+        assertDoesNotThrow(() -> logger.info("Test %s", (Object) null));
+        assertDoesNotThrow(() -> logger.error("Error", (Throwable) null));
+    }
+
+    @Test
+    @DisplayName("Should handle very long messages")
+    void testLongMessages() throws IOException {
+        LoggingService.init(true, testLogFile, LoggingService.LogLevel.INFO);
+        LoggingService.Logger logger = LoggingService.getLogger("TestLogger");
+
+        // Create a very long message (10KB)
+        String longMessage = "A".repeat(10240);
+        logger.info(longMessage);
+
+        String fileContent = Files.readString(Path.of(testLogFile));
+        assertTrue(fileContent.contains(longMessage));
+    }
+
+    @Test
+    @DisplayName("Should not cause memory leaks with many loggers")
+    void testMemoryUsageWithManyLoggers() {
+        LoggingService.init(true, testLogFile, LoggingService.LogLevel.INFO);
+
+        // Create many loggers (simulate real application usage)
+        List<LoggingService.Logger> loggers = new ArrayList<>();
+        for (int i = 0; i < 1000; i++) {
+            loggers.add(LoggingService.getLogger("Logger-" + i));
+        }
+
+        // Force garbage collection and check memory
+        System.gc();
+        long memoryBefore = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
+
+        // Use the loggers
+        loggers.forEach(logger -> logger.info("Test message"));
+
+        // Clear references and force GC
+        loggers.clear();
+        System.gc();
+        long memoryAfter = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
+
+        // Memory usage shouldn't grow significantly
+        long memoryDiff = memoryAfter - memoryBefore;
+        assertTrue(memoryDiff < 1024 * 1024, "Memory usage grew by " + memoryDiff + " bytes");
     }
 }

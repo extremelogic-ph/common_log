@@ -136,13 +136,28 @@
                     </execution>
                 </executions>
             </plugin>
+
+            <!--
+            Uploads artifacts to a repository (e.g. Sonatype OSSRH).
+            Uses settings.xml:
+
+            It looks for server credentials (username/password) under the <servers> section
+            in settings.xml, matching the <id> defined in your <distributionManagement>
+            -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-deploy-plugin</artifactId>
                 <version>3.1.1</version>
             </plugin>
-            <!-- Required for OSSRH deployment -->
+
             <!--
+            Close a staging repository on Sonatype OSSRH.
+            Validate that everything is in place.
+            Automatically release the repository (if autoReleaseAfterClose is true).
+
+            Reads credentials from settings.xml, specifically from the <servers> section
+            based on the serverId.
+            -->
             <plugin>
                 <groupId>org.sonatype.plugins</groupId>
                 <artifactId>nexus-staging-maven-plugin</artifactId>
@@ -151,10 +166,10 @@
                 <configuration>
                     <serverId>ossrh</serverId>
                     <nexusUrl>https://oss.sonatype.org/</nexusUrl>
-                    <autoReleaseAfterClose>true</autoReleaseAfterClose>
+                    <autoReleaseAfterClose>false</autoReleaseAfterClose>
                 </configuration>
             </plugin>
-            -->
+
             <!--plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>

@@ -70,8 +70,6 @@ public class LoggingService {
                 }
                 loggerInitialized = true;
 
-                // Log initialization message
-                //writeLog(LogLevel.INFO, "LoggingService", "Logger initialized with file: " + logFileName);
             } catch (IOException e) {
                 System.err.println("Failed to initialize logger with file: " + logFileName + " - " + e.getMessage());
             }

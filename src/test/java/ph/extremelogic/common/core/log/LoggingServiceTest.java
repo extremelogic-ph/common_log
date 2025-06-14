@@ -128,8 +128,8 @@ class LoggingServiceTest {
 
         // Check file content
         List<String> lines = Files.readAllLines(Path.of(testLogFile));
-        assertEquals(2, lines.size()); // Initialization message + test message
-        assertTrue(lines.get(1).contains("INFO") && lines.get(1).contains("TestLogger") && lines.get(1).contains("Test message"));
+        assertEquals(1, lines.size()); // test message
+        assertTrue(lines.get(0).contains("INFO") && lines.get(0).contains("TestLogger") && lines.get(0).contains("Test message"));
 
         // Check console output
         String consoleString = consoleOutput.toString();
@@ -148,9 +148,9 @@ class LoggingServiceTest {
         logger.error("Error message");  // Should be logged
 
         List<String> lines = Files.readAllLines(Path.of(testLogFile));
-        assertEquals(3, lines.size()); // Init + warn + error
-        assertTrue(lines.get(1).contains("WARN") && lines.get(1).contains("Warning message"));
-        assertTrue(lines.get(2).contains("ERROR") && lines.get(2).contains("Error message"));
+        assertEquals(2, lines.size()); // warn + error
+        assertTrue(lines.get(0).contains("WARN") && lines.get(0).contains("Warning message"));
+        assertTrue(lines.get(1).contains("ERROR") && lines.get(1).contains("Error message"));
     }
 
     @Test
@@ -177,7 +177,7 @@ class LoggingServiceTest {
         logger.info("User %s logged in with ID %d", "john", 123);
 
         List<String> lines = Files.readAllLines(Path.of(testLogFile));
-        assertTrue(lines.get(1).contains("User john logged in with ID 123"));
+        assertTrue(lines.get(0).contains("User john logged in with ID 123"));
     }
 
     @Test
@@ -267,8 +267,8 @@ class LoggingServiceTest {
         executor.shutdown();
 
         List<String> lines = Files.readAllLines(Path.of(testLogFile));
-        // Should have init message + (threadCount * messagesPerThread) messages
-        assertEquals(1 + (threadCount * messagesPerThread), lines.size());
+        // Should have (threadCount * messagesPerThread) messages
+        assertEquals((threadCount * messagesPerThread), lines.size());
     }
 
     @Test
@@ -302,7 +302,7 @@ class LoggingServiceTest {
             logger.info("Test message");
 
             List<String> lines = Files.readAllLines(Path.of(testLogFile));
-            String logLine = lines.get(1); // Skip initialization message
+            String logLine = lines.get(0); // Skip initialization message
 
             assertTrue(logLine.matches("\\[\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\] INFO  \\[TestLogger\\] - Test message"));
         }

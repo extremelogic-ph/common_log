@@ -5,7 +5,7 @@
 
     <groupId>ph.extremelogic</groupId>
     <artifactId>extremelogic-common-log</artifactId>
-    <version>0.0.1</version>
+    <version>0.0.2</version>
     <packaging>jar</packaging>
 
     <name>Extreme Logic Common Log</name>
@@ -71,6 +71,11 @@
             <scope>test</scope>
         </dependency>
 
+        <dependency>
+            <groupId>com.lmax</groupId>
+            <artifactId>disruptor</artifactId>
+            <version>3.4.4</version>
+        </dependency>
     </dependencies>
 
     <build>

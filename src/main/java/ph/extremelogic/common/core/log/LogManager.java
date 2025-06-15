@@ -127,6 +127,7 @@ public class LogManager {
      * - Early exit before any expensive operations
      * - Fast string formatting using StringBuilder
      * - Reduced lock scope
+     * - Lazy timestamp generation with caching
      */
     protected void writeLog(LogLevel level, String loggerName, String message) {
         // OPTIMIZATION 1: Early exit - no expensive operations if filtered
@@ -134,15 +135,16 @@ public class LogManager {
             return;
         }
 
-        // OPTIMIZATION 2: Fast string formatting outside of lock
-        String logEntry = formatLogEntryFast(level, loggerName, message);
+        // OPTIMIZATION 2: Create a lazy log entry formatter
+        LazyLogEntry lazyEntry = new LazyLogEntry(level, loggerName, message);
 
         // OPTIMIZATION 3: Minimize lock scope - only hold lock during appender calls
         lock.writeLock().lock();
         try {
             for (Appender appender : appenders) {
                 try {
-                    appender.append(logEntry);
+                    // Each appender gets the formatted string only when it actually calls toString()
+                    appender.append(lazyEntry.toString());
                 } catch (Throwable t) {
                     // Handle errors without holding the lock longer
                     handleAppenderError(appender, t);
@@ -162,15 +164,15 @@ public class LogManager {
             return;
         }
 
-        // Fast string formatting outside of lock
-        String logEntry = formatLogEntryFast(level, loggerName, message);
+        // Create lazy log entry formatter
+        LazyLogEntry lazyEntry = new LazyLogEntry(level, loggerName, message);
 
         // Minimize lock scope
         lock.writeLock().lock();
         try {
             for (Appender appender : appenders) {
                 try {
-                    appender.append(logEntry, throwable);
+                    appender.append(lazyEntry.toString(), throwable);
                 } catch (Throwable t) {
                     handleAppenderError(appender, t);
                 }
@@ -181,8 +183,39 @@ public class LogManager {
     }
 
     /**
+     * Lazy log entry that only formats the string when actually needed
+     * This avoids timestamp generation and string formatting if no appenders need it
+     */
+    private class LazyLogEntry {
+        private final LogLevel level;
+        private final String loggerName;
+        private final String message;
+        private volatile String formattedEntry; // Cached result
+
+        LazyLogEntry(LogLevel level, String loggerName, String message) {
+            this.level = level;
+            this.loggerName = loggerName;
+            this.message = message;
+        }
+
+        @Override
+        public String toString() {
+            // Double-checked locking for thread-safe lazy initialization
+            if (formattedEntry == null) {
+                synchronized (this) {
+                    if (formattedEntry == null) {
+                        formattedEntry = formatLogEntryFast(level, loggerName, message);
+                    }
+                }
+            }
+            return formattedEntry;
+        }
+    }
+
+    /**
      * OPTIMIZATION: Fast string formatting using StringBuilder instead of String.format
      * This is approximately 3-5x faster than String.format for simple log formatting
+     * Now with lazy timestamp generation - timestamp is only created when actually needed
      */
     private String formatLogEntryFast(LogLevel level, String loggerName, String message) {
         StringBuilder sb = STRING_BUILDER_CACHE.get();
@@ -190,7 +223,7 @@ public class LogManager {
 
         // Build: [timestamp] LEVEL [loggerName] - message\n
         sb.append('[');
-        sb.append(LocalDateTime.now().format(dateFormatter));
+        sb.append(getFormattedTimestamp()); // Lazy timestamp generation
         sb.append("] ");
         sb.append(level.getLabel());
         sb.append(" [");
@@ -200,6 +233,40 @@ public class LogManager {
         sb.append(System.lineSeparator());
 
         return sb.toString();
+    }
+
+    /**
+     * OPTIMIZATION: Lazy timestamp generation with caching
+     * Cache timestamp for a brief moment to avoid multiple System.currentTimeMillis() calls
+     * within the same millisecond for high-frequency logging
+     */
+    private static final ThreadLocal<TimestampCache> TIMESTAMP_CACHE =
+            ThreadLocal.withInitial(TimestampCache::new);
+
+    private String getFormattedTimestamp() {
+        TimestampCache cache = TIMESTAMP_CACHE.get();
+        long currentTime = System.currentTimeMillis();
+
+        // If we're still in the same millisecond, reuse the cached timestamp
+        if (cache.lastTimestamp == currentTime && cache.formattedTimestamp != null) {
+            return cache.formattedTimestamp;
+        }
+
+        // Generate new timestamp
+        LocalDateTime now = LocalDateTime.now();
+        cache.formattedTimestamp = now.format(dateFormatter);
+        cache.lastTimestamp = currentTime;
+
+        return cache.formattedTimestamp;
+    }
+
+    /**
+     * Simple cache for timestamp formatting to avoid repeated formatting
+     * within the same millisecond
+     */
+    private static class TimestampCache {
+        long lastTimestamp = -1;
+        String formattedTimestamp = null;
     }
 
     /**

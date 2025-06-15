@@ -12,7 +12,7 @@ public class Logger {
 
     // TRACE level methods
     public void trace(String message) {
-        LoggingService.getInstance().writeLog(LogLevel.TRACE, name, message);
+        LogManager.getInstance().writeLog(LogLevel.TRACE, name, message);
     }
 
     public void trace(String format, Object arg) {
@@ -34,12 +34,12 @@ public class Logger {
     }
 
     public void trace(String message, Throwable t) {
-        LoggingService.getInstance().writeLog(LogLevel.TRACE, name, message, t);
+        LogManager.getInstance().writeLog(LogLevel.TRACE, name, message, t);
     }
 
     // DEBUG level methods
     public void debug(String message) {
-        LoggingService.getInstance().writeLog(LogLevel.DEBUG, name, message);
+        LogManager.getInstance().writeLog(LogLevel.DEBUG, name, message);
     }
 
     public void debug(String format, Object arg) {
@@ -61,12 +61,12 @@ public class Logger {
     }
 
     public void debug(String message, Throwable t) {
-        LoggingService.getInstance().writeLog(LogLevel.DEBUG, name, message, t);
+        LogManager.getInstance().writeLog(LogLevel.DEBUG, name, message, t);
     }
 
     // INFO level methods
     public void info(String message) {
-        LoggingService.getInstance().writeLog(LogLevel.INFO, name, message);
+        LogManager.getInstance().writeLog(LogLevel.INFO, name, message);
     }
 
     public void info(String format, Object arg) {
@@ -88,12 +88,12 @@ public class Logger {
     }
 
     public void info(String message, Throwable t) {
-        LoggingService.getInstance().writeLog(LogLevel.INFO, name, message, t);
+        LogManager.getInstance().writeLog(LogLevel.INFO, name, message, t);
     }
 
     // WARN level methods
     public void warn(String message) {
-        LoggingService.getInstance().writeLog(LogLevel.WARN, name, message);
+        LogManager.getInstance().writeLog(LogLevel.WARN, name, message);
     }
 
     public void warn(String format, Object arg) {
@@ -115,12 +115,12 @@ public class Logger {
     }
 
     public void warn(String message, Throwable t) {
-        LoggingService.getInstance().writeLog(LogLevel.WARN, name, message, t);
+        LogManager.getInstance().writeLog(LogLevel.WARN, name, message, t);
     }
 
     // ERROR level methods
     public void error(String message) {
-        LoggingService.getInstance().writeLog(LogLevel.ERROR, name, message);
+        LogManager.getInstance().writeLog(LogLevel.ERROR, name, message);
     }
 
     public void error(String format, Object arg) {
@@ -142,28 +142,28 @@ public class Logger {
     }
 
     public void error(String message, Throwable t) {
-        LoggingService.getInstance().writeLog(LogLevel.ERROR, name, message, t);
+        LogManager.getInstance().writeLog(LogLevel.ERROR, name, message, t);
     }
 
     // Level check methods
     public boolean isTraceEnabled() {
-        return LoggingService.getInstance().minimumLevel.getPriority() <= LogLevel.TRACE.getPriority();
+        return LogManager.getInstance().minimumLevel.getPriority() <= LogLevel.TRACE.getPriority();
     }
 
     public boolean isDebugEnabled() {
-        return LoggingService.getInstance().minimumLevel.getPriority() <= LogLevel.DEBUG.getPriority();
+        return LogManager.getInstance().minimumLevel.getPriority() <= LogLevel.DEBUG.getPriority();
     }
 
     public boolean isInfoEnabled() {
-        return LoggingService.getInstance().minimumLevel.getPriority() <= LogLevel.INFO.getPriority();
+        return LogManager.getInstance().minimumLevel.getPriority() <= LogLevel.INFO.getPriority();
     }
 
     public boolean isWarnEnabled() {
-        return LoggingService.getInstance().minimumLevel.getPriority() <= LogLevel.WARN.getPriority();
+        return LogManager.getInstance().minimumLevel.getPriority() <= LogLevel.WARN.getPriority();
     }
 
     public boolean isErrorEnabled() {
-        return LoggingService.getInstance().minimumLevel.getPriority() <= LogLevel.ERROR.getPriority();
+        return LogManager.getInstance().minimumLevel.getPriority() <= LogLevel.ERROR.getPriority();
     }
 
     // SLF4J-style parameterized message formatting

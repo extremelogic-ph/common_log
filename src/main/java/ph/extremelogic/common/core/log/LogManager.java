@@ -16,9 +16,9 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * Thread-safe implementation that can be reused across the application
  * Now with support for multiple appenders (console, file, etc.)
  */
-public class LoggingService {
+public class LogManager {
 
-    private static volatile LoggingService instance;
+    private static volatile LogManager instance;
     private final boolean enabled;
     protected final LogLevel minimumLevel;
     private final DateTimeFormatter dateFormatter;
@@ -26,7 +26,7 @@ public class LoggingService {
     private final List<Appender> appenders = new ArrayList<>();
 
     // Private constructor to prevent instantiation
-    private LoggingService(boolean enabled, LogLevel minimumLevel, List<Appender> appenders) {
+    private LogManager(boolean enabled, LogLevel minimumLevel, List<Appender> appenders) {
         this.enabled = enabled;
         this.minimumLevel = minimumLevel;
         this.dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
@@ -57,9 +57,9 @@ public class LoggingService {
      */
     public static void init(boolean enabled, LogLevel minimumLevel, List<Appender> appenders) {
         if (instance == null) {
-            synchronized (LoggingService.class) {
+            synchronized (LogManager.class) {
                 if (instance == null) {
-                    instance = new LoggingService(enabled, minimumLevel, appenders);
+                    instance = new LogManager(enabled, minimumLevel, appenders);
                 }
             }
         }
@@ -94,7 +94,7 @@ public class LoggingService {
     /**
      * Gets the singleton instance (assumes already initialized)
      */
-    public static LoggingService getInstance() {
+    public static LogManager getInstance() {
         if (instance == null) {
             throw new IllegalStateException("LoggingService not initialized. Call init() first.");
         }

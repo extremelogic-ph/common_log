@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class LoggingServiceTest {
+class LogManagerTest {
 
     @TempDir
     Path tempDir;
@@ -50,7 +50,7 @@ class LoggingServiceTest {
     }
 
     private void resetSingleton() throws Exception {
-        Field instanceField = LoggingService.class.getDeclaredField("instance");
+        Field instanceField = LogManager.class.getDeclaredField("instance");
         instanceField.setAccessible(true);
         instanceField.set(null, null);
     }
@@ -58,8 +58,8 @@ class LoggingServiceTest {
     @Test
     @DisplayName("Should use INFO as default minimum level")
     void testInitializationWithDefaultLevel() {
-        LoggingService.init(true, testLogFile);
-        LoggingService service = LoggingService.getInstance();
+        LogManager.init(true, testLogFile);
+        LogManager service = LogManager.getInstance();
 
         assertEquals(LogLevel.INFO, service.getMinimumLevel());
     }
@@ -69,7 +69,7 @@ class LoggingServiceTest {
     void testGetInstanceBeforeInit() {
         IllegalStateException exception = assertThrows(
                 IllegalStateException.class,
-                LoggingService::getInstance
+                LogManager::getInstance
         );
         assertEquals("LoggingService not initialized. Call init() first.", exception.getMessage());
     }
@@ -80,14 +80,14 @@ class LoggingServiceTest {
         int threadCount = 10;
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
         CountDownLatch latch = new CountDownLatch(threadCount);
-        LoggingService[] instances = new LoggingService[threadCount];
+        LogManager[] instances = new LogManager[threadCount];
 
         for (int i = 0; i < threadCount; i++) {
             final int index = i;
             executor.submit(() -> {
                 try {
-                    LoggingService.init(true, testLogFile, LogLevel.INFO);
-                    instances[index] = LoggingService.getInstance();
+                    LogManager.init(true, testLogFile, LogLevel.INFO);
+                    instances[index] = LogManager.getInstance();
                 } finally {
                     latch.countDown();
                 }
@@ -107,8 +107,8 @@ class LoggingServiceTest {
     @Test
     @DisplayName("Should write log messages to file and console")
     void testLogWriting() throws IOException {
-        LoggingService.init(true, testLogFile, LogLevel.INFO);
-        Logger logger = LoggingService.getLogger("TestLogger");
+        LogManager.init(true, testLogFile, LogLevel.INFO);
+        Logger logger = LogManager.getLogger("TestLogger");
 
         logger.info("Test message");
 
@@ -125,8 +125,8 @@ class LoggingServiceTest {
     @Test
     @DisplayName("Should respect minimum log level")
     void testLogLevelFiltering() throws IOException {
-        LoggingService.init(true, testLogFile, LogLevel.WARN);
-        Logger logger = LoggingService.getLogger("TestLogger");
+        LogManager.init(true, testLogFile, LogLevel.WARN);
+        Logger logger = LogManager.getLogger("TestLogger");
 
         logger.debug("Debug message"); // Should be filtered out
         logger.info("Info message");   // Should be filtered out
@@ -142,8 +142,8 @@ class LoggingServiceTest {
     @Test
     @DisplayName("Should log exceptions with stack trace")
     void testExceptionLogging() throws IOException {
-        LoggingService.init(true, testLogFile, LogLevel.ERROR);
-        Logger logger = LoggingService.getLogger("TestLogger");
+        LogManager.init(true, testLogFile, LogLevel.ERROR);
+        Logger logger = LogManager.getLogger("TestLogger");
 
         Exception testException = new RuntimeException("Test exception");
         logger.error("Error occurred", testException);
@@ -157,8 +157,8 @@ class LoggingServiceTest {
     @Test
     @DisplayName("Should handle formatted logging")
     void testFormattedLogging() throws IOException {
-        LoggingService.init(true, testLogFile, LogLevel.INFO);
-        Logger logger = LoggingService.getLogger("TestLogger");
+        LogManager.init(true, testLogFile, LogLevel.INFO);
+        Logger logger = LogManager.getLogger("TestLogger");
 
         logger.info("User {} logged in with ID {}", "john", 123);
 
@@ -169,8 +169,8 @@ class LoggingServiceTest {
     @Test
     @DisplayName("Should not log when disabled")
     void testDisabledLogging() throws IOException {
-        LoggingService.init(false, testLogFile, LogLevel.INFO);
-        Logger logger = LoggingService.getLogger("TestLogger");
+        LogManager.init(false, testLogFile, LogLevel.INFO);
+        Logger logger = LogManager.getLogger("TestLogger");
 
         logger.info("This should not be logged");
 
@@ -181,10 +181,10 @@ class LoggingServiceTest {
     @Test
     @DisplayName("Should handle logger creation for class and string")
     void testLoggerCreation() {
-        LoggingService.init(true, testLogFile, LogLevel.INFO);
+        LogManager.init(true, testLogFile, LogLevel.INFO);
 
-        Logger classLogger = LoggingService.getLogger(LoggingServiceTest.class);
-        Logger stringLogger = LoggingService.getLogger("CustomLogger");
+        Logger classLogger = LogManager.getLogger(LogManagerTest.class);
+        Logger stringLogger = LogManager.getLogger("CustomLogger");
 
         assertNotNull(classLogger);
         assertNotNull(stringLogger);
@@ -193,8 +193,8 @@ class LoggingServiceTest {
     @Test
     @DisplayName("Should check log level enablement correctly")
     void testLogLevelChecks() {
-        LoggingService.init(true, testLogFile, LogLevel.WARN);
-        Logger logger = LoggingService.getLogger("TestLogger");
+        LogManager.init(true, testLogFile, LogLevel.WARN);
+        Logger logger = LogManager.getLogger("TestLogger");
 
         assertFalse(logger.isDebugEnabled());
         assertFalse(logger.isInfoEnabled());
@@ -206,7 +206,7 @@ class LoggingServiceTest {
     void testFileWriteError() {
         // Use an invalid file path
         String invalidPath = "/invalid/path/test.log";
-        LoggingService.init(true, invalidPath, LogLevel.INFO);
+        LogManager.init(true, invalidPath, LogLevel.INFO);
 
         // Capture stderr to check error messages
         ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
@@ -214,7 +214,7 @@ class LoggingServiceTest {
         System.setErr(new PrintStream(errorOutput));
 
         try {
-            Logger logger = LoggingService.getLogger("TestLogger");
+            Logger logger = LogManager.getLogger("TestLogger");
             logger.info("This should fail to write to file");
 
             String errorString = errorOutput.toString();
@@ -228,7 +228,7 @@ class LoggingServiceTest {
     @Test
     @DisplayName("Should handle concurrent logging correctly")
     void testConcurrentLogging() throws InterruptedException, IOException {
-        LoggingService.init(true, testLogFile, LogLevel.INFO);
+        LogManager.init(true, testLogFile, LogLevel.INFO);
 
         int threadCount = 10;
         int messagesPerThread = 10;
@@ -239,7 +239,7 @@ class LoggingServiceTest {
             final int threadId = i;
             executor.submit(() -> {
                 try {
-                    Logger logger = LoggingService.getLogger("Thread-" + threadId);
+                    Logger logger = LogManager.getLogger("Thread-" + threadId);
                     for (int j = 0; j < messagesPerThread; j++) {
                         logger.info("Message %d from thread %d", j, threadId);
                     }
@@ -282,8 +282,8 @@ class LoggingServiceTest {
         try (MockedStatic<LocalDateTime> mockedDateTime = Mockito.mockStatic(LocalDateTime.class)) {
             mockedDateTime.when(LocalDateTime::now).thenReturn(fixedTime);
 
-            LoggingService.init(true, testLogFile, LogLevel.INFO);
-            Logger logger = LoggingService.getLogger("TestLogger");
+            LogManager.init(true, testLogFile, LogLevel.INFO);
+            Logger logger = LogManager.getLogger("TestLogger");
 
             logger.info("Test message");
 
@@ -296,7 +296,7 @@ class LoggingServiceTest {
     @Test
     @DisplayName("Should handle high-concurrency logging without data corruption")
     void testHighConcurrencyLogging() throws InterruptedException, IOException {
-        LoggingService.init(true, testLogFile, LogLevel.INFO);
+        LogManager.init(true, testLogFile, LogLevel.INFO);
 
         int threadCount = 50;
         int messagesPerThread = 100;
@@ -311,7 +311,7 @@ class LoggingServiceTest {
             executor.submit(() -> {
                 try {
                     startLatch.await(); // Wait for all threads to be ready
-                    Logger logger = LoggingService.getLogger("Thread-" + threadId);
+                    Logger logger = LogManager.getLogger("Thread-" + threadId);
                     for (int j = 0; j < messagesPerThread; j++) {
                         String message = String.format("Thread-%d-Message-%d", threadId, j);
                         expectedMessages.add(message);
@@ -339,8 +339,8 @@ class LoggingServiceTest {
     @Test
     @DisplayName("Should maintain acceptable performance under load")
     void testLoggingPerformance() {
-        LoggingService.init(true, testLogFile, LogLevel.INFO);
-        Logger logger = LoggingService.getLogger("PerformanceTest");
+        LogManager.init(true, testLogFile, LogLevel.INFO);
+        Logger logger = LogManager.getLogger("PerformanceTest");
 
         int messageCount = 10000;
         long startTime = System.nanoTime();
@@ -363,8 +363,8 @@ class LoggingServiceTest {
     @Test
     @DisplayName("Should handle null and empty parameters gracefully")
     void testNullAndEmptyParameters() {
-        LoggingService.init(true, testLogFile, LogLevel.INFO);
-        Logger logger = LoggingService.getLogger("TestLogger");
+        LogManager.init(true, testLogFile, LogLevel.INFO);
+        Logger logger = LogManager.getLogger("TestLogger");
 
         // These should not throw exceptions
         assertDoesNotThrow(() -> logger.info(null));
@@ -376,8 +376,8 @@ class LoggingServiceTest {
     @Test
     @DisplayName("Should handle very long messages")
     void testLongMessages() throws IOException {
-        LoggingService.init(true, testLogFile, LogLevel.INFO);
-        Logger logger = LoggingService.getLogger("TestLogger");
+        LogManager.init(true, testLogFile, LogLevel.INFO);
+        Logger logger = LogManager.getLogger("TestLogger");
 
         // Create a very long message (10KB)
         String longMessage = "A".repeat(10240);
@@ -390,12 +390,12 @@ class LoggingServiceTest {
     @Test
     @DisplayName("Should not cause memory leaks with many loggers")
     void testMemoryUsageWithManyLoggers() {
-        LoggingService.init(true, testLogFile, LogLevel.INFO);
+        LogManager.init(true, testLogFile, LogLevel.INFO);
 
         // Create many loggers (simulate real application usage)
         List<Logger> loggers = new ArrayList<>();
         for (int i = 0; i < 1000; i++) {
-            loggers.add(LoggingService.getLogger("Logger-" + i));
+            loggers.add(LogManager.getLogger("Logger-" + i));
         }
 
         // Force garbage collection and check memory

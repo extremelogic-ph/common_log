@@ -5,7 +5,9 @@ import ph.extremelogic.common.core.log.appender.ConsoleAppender;
 import ph.extremelogic.common.core.log.appender.FileAppender;
 
 import java.io.IOException;
+import java.time.DateTimeException;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,6 +26,12 @@ public class LogManager {
     private final DateTimeFormatter dateFormatter;
     private final ReentrantReadWriteLock configLock = new ReentrantReadWriteLock();
     private final List<Appender> appenders = new ArrayList<>();
+
+    // OPTIMIZATION: Cache formatter as well since it's expensive to create
+    private static final DateTimeFormatter TIMESTAMP_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+
+    private static final ZoneId SYSTEM_ZONE = ZoneId.systemDefault();
 
     // ASYNC OPTIMIZATION: Ring buffer for async logging
     private final AsyncLogProcessor asyncProcessor;
@@ -236,27 +244,49 @@ public class LogManager {
     private static String formatTimestamp(long timestamp) {
         TimestampCache cache = TIMESTAMP_CACHE.get();
 
-        // Cache for the same millisecond
+        // Cache check
         if (cache.lastTimestamp == timestamp && cache.formattedTimestamp != null) {
             return cache.formattedTimestamp;
         }
 
-        // Format new timestamp
-        LocalDateTime dateTime = LocalDateTime.ofInstant(
-                java.time.Instant.ofEpochMilli(timestamp),
-                java.time.ZoneId.systemDefault()
-        );
+        try {
+            // Create LocalDateTime
+            LocalDateTime dateTime = LocalDateTime.ofInstant(
+                    java.time.Instant.ofEpochMilli(timestamp),
+                    SYSTEM_ZONE
+            );
 
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
-        cache.formattedTimestamp = dateTime.format(formatter);
-        cache.lastTimestamp = timestamp;
+            // Format using static formatter
+            String formatted = dateTime.format(TIMESTAMP_FORMATTER);
 
-        return cache.formattedTimestamp;
+            // Cache the result
+            cache.formattedTimestamp = formatted;
+            cache.lastTimestamp = timestamp;
+
+            return formatted;
+
+        } catch (Exception e) {
+            // Fallback: Use simple date format
+            try {
+                java.util.Date date = new java.util.Date(timestamp);
+                java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
+                return sdf.format(date);
+            } catch (Exception fallbackException) {
+                // Ultimate fallback
+                return java.time.Instant.ofEpochMilli(timestamp).toString();
+            }
+        }
     }
 
+    // Enhanced TimestampCache with validation
     private static class TimestampCache {
         long lastTimestamp = -1;
         String formattedTimestamp = null;
+
+        // Add validation method
+        boolean isValid(long timestamp) {
+            return lastTimestamp == timestamp && formattedTimestamp != null;
+        }
     }
 
     /**

@@ -107,7 +107,7 @@ class LogManagerTest {
     @Test
     @DisplayName("Should write log messages to file and console")
     void testLogWriting() throws IOException {
-        LogManager.init(true, testLogFile, LogLevel.INFO);
+        LogManager.init(true, testLogFile, LogLevel.INFO, false);
         Logger logger = LogManager.getLogger("TestLogger");
 
         logger.info("Test message");
@@ -125,7 +125,7 @@ class LogManagerTest {
     @Test
     @DisplayName("Should respect minimum log level")
     void testLogLevelFiltering() throws IOException {
-        LogManager.init(true, testLogFile, LogLevel.WARN);
+        LogManager.init(true, testLogFile, LogLevel.WARN, false);
         Logger logger = LogManager.getLogger("TestLogger");
 
         logger.debug("Debug message"); // Should be filtered out
@@ -142,7 +142,7 @@ class LogManagerTest {
     @Test
     @DisplayName("Should log exceptions with stack trace")
     void testExceptionLogging() throws IOException {
-        LogManager.init(true, testLogFile, LogLevel.ERROR);
+        LogManager.init(true, testLogFile, LogLevel.ERROR, false);
         Logger logger = LogManager.getLogger("TestLogger");
 
         Exception testException = new RuntimeException("Test exception");
@@ -157,7 +157,7 @@ class LogManagerTest {
     @Test
     @DisplayName("Should handle formatted logging")
     void testFormattedLogging() throws IOException {
-        LogManager.init(true, testLogFile, LogLevel.INFO);
+        LogManager.init(true, testLogFile, LogLevel.INFO, false);
         Logger logger = LogManager.getLogger("TestLogger");
 
         logger.info("User {} logged in with ID {}", "john", 123);
@@ -206,7 +206,7 @@ class LogManagerTest {
     void testFileWriteError() {
         // Use an invalid file path
         String invalidPath = "/invalid/path/test.log";
-        LogManager.init(true, invalidPath, LogLevel.INFO);
+        LogManager.init(true, invalidPath, LogLevel.INFO, false);
 
         // Capture stderr to check error messages
         ByteArrayOutputStream errorOutput = new ByteArrayOutputStream();
@@ -228,7 +228,7 @@ class LogManagerTest {
     @Test
     @DisplayName("Should handle concurrent logging correctly")
     void testConcurrentLogging() throws InterruptedException, IOException {
-        LogManager.init(true, testLogFile, LogLevel.INFO);
+        LogManager.init(true, testLogFile, LogLevel.INFO, false);
 
         int threadCount = 10;
         int messagesPerThread = 10;
@@ -282,7 +282,7 @@ class LogManagerTest {
         try (MockedStatic<LocalDateTime> mockedDateTime = Mockito.mockStatic(LocalDateTime.class)) {
             mockedDateTime.when(LocalDateTime::now).thenReturn(fixedTime);
 
-            LogManager.init(true, testLogFile, LogLevel.INFO);
+            LogManager.init(true, testLogFile, LogLevel.INFO, false);
             Logger logger = LogManager.getLogger("TestLogger");
 
             logger.info("Test message");
@@ -296,7 +296,7 @@ class LogManagerTest {
     @Test
     @DisplayName("Should handle high-concurrency logging without data corruption")
     void testHighConcurrencyLogging() throws InterruptedException, IOException {
-        LogManager.init(true, testLogFile, LogLevel.INFO);
+        LogManager.init(true, testLogFile, LogLevel.INFO, false);
 
         int threadCount = 50;
         int messagesPerThread = 100;
@@ -339,7 +339,7 @@ class LogManagerTest {
     @Test
     @DisplayName("Should maintain acceptable performance under load")
     void testLoggingPerformance() {
-        LogManager.init(true, testLogFile, LogLevel.INFO);
+        LogManager.init(true, testLogFile, LogLevel.INFO, false);
         Logger logger = LogManager.getLogger("PerformanceTest");
 
         int messageCount = 10000;
@@ -376,7 +376,7 @@ class LogManagerTest {
     @Test
     @DisplayName("Should handle very long messages")
     void testLongMessages() throws IOException {
-        LogManager.init(true, testLogFile, LogLevel.INFO);
+        LogManager.init(true, testLogFile, LogLevel.INFO, false);
         Logger logger = LogManager.getLogger("TestLogger");
 
         // Create a very long message (10KB)
@@ -390,7 +390,7 @@ class LogManagerTest {
     @Test
     @DisplayName("Should not cause memory leaks with many loggers")
     void testMemoryUsageWithManyLoggers() {
-        LogManager.init(true, testLogFile, LogLevel.INFO);
+        LogManager.init(true, testLogFile, LogLevel.INFO, false);
 
         // Create many loggers (simulate real application usage)
         List<Logger> loggers = new ArrayList<>();

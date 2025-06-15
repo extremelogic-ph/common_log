@@ -9,12 +9,6 @@ import java.io.Writer;
 /**
  * Optimized FileAppender with single file handle management
  */
-import java.io.BufferedWriter;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.io.Writer;
-
 public class FileAppender implements Appender, AutoCloseable {
     private final String logFileName;
     private Writer writer;

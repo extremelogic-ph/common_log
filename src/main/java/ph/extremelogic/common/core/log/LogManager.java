@@ -1,33 +1,23 @@
 package ph.extremelogic.common.core.log;
 
-import com.lmax.disruptor.TimeoutException;
+import com.lmax.disruptor.*;
+import com.lmax.disruptor.dsl.Disruptor;
+import com.lmax.disruptor.dsl.ProducerType;
 import ph.extremelogic.common.core.log.appender.Appender;
 import ph.extremelogic.common.core.log.appender.ConsoleAppender;
 import ph.extremelogic.common.core.log.appender.FileAppender;
 
 import java.io.IOException;
-import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.stream.Collectors;
-
-import java.util.concurrent.*;
-
-import com.lmax.disruptor.*;
-import com.lmax.disruptor.dsl.Disruptor;
-import com.lmax.disruptor.dsl.ProducerType;
-
-import java.io.IOException;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 
@@ -203,8 +193,9 @@ public class LogManager {
                 Appender[] currentAppenders = appendersArray;
                 if (currentAppenders.length == 0) return;
 
-                // OPTIMIZATION: Process all events for each appender (better I/O efficiency)
-                for (Appender appender : currentAppenders) {
+                // For single appender, skip parallel overhead
+                if (currentAppenders.length == 1) {
+                    Appender appender = currentAppenders[0];
                     try {
                         for (DisruptorLogEvent event : events) {
                             String formattedMessage = event.getFormattedMessage();
@@ -217,7 +208,24 @@ public class LogManager {
                     } catch (Throwable t) {
                         handleAppenderError(appender, t);
                     }
+                    return;
                 }
+
+                // Parallel processing for multiple appenders
+                Arrays.stream(currentAppenders).parallel().forEach(appender -> {
+                    try {
+                        for (DisruptorLogEvent event : events) {
+                            String formattedMessage = event.getFormattedMessage();
+                            if (event.throwable != null) {
+                                appender.append(formattedMessage, event.throwable);
+                            } else {
+                                appender.append(formattedMessage);
+                            }
+                        }
+                    } catch (Throwable t) {
+                        handleAppenderError(appender, t);
+                    }
+                });
             }
         }
 

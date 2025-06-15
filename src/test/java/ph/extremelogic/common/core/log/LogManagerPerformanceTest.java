@@ -6,7 +6,6 @@ import org.junit.jupiter.api.AfterEach;
 import static org.junit.jupiter.api.Assertions.*;
 
 import ph.extremelogic.common.core.log.appender.Appender;
-import ph.extremelogic.common.core.log.appender.ConsoleAppender;
 import java.util.ArrayList;
 import java.util.List;
 

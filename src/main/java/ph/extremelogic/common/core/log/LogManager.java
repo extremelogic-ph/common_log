@@ -8,6 +8,8 @@ import ph.extremelogic.common.core.log.appender.ConsoleAppender;
 import ph.extremelogic.common.core.log.appender.FileAppender;
 
 import java.io.IOException;
+import java.lang.ref.WeakReference;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -27,44 +29,49 @@ public class LogManager {
     private final boolean enabled;
     protected final LogLevel minimumLevel;
     private final int minimumLevelPriority;
-    private final DateTimeFormatter dateFormatter;
     private final ReentrantReadWriteLock configLock = new ReentrantReadWriteLock();
     private final List<Appender> appenders = new ArrayList<>();
 
-    // OPTIMIZATION: Cache formatter as well since it's expensive to create
+    // OPTIMIZATION 1: Static immutable formatter - thread-safe and reusable
     private static final DateTimeFormatter TIMESTAMP_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
     private static final ZoneId SYSTEM_ZONE = ZoneId.systemDefault();
+    private static final String LINE_SEPARATOR = System.lineSeparator();
 
-    // DISRUPTOR OPTIMIZATION: Ring buffer for async logging
+    // OPTIMIZATION 2: Enhanced Disruptor with better wait strategy
     private final DisruptorAsyncLogProcessor asyncProcessor;
     private final boolean asyncEnabled;
 
-    // OPTIMIZATION: Pre-allocate and reuse arrays to avoid ArrayList iteration overhead
+    // OPTIMIZATION 3: Atomic reference for lock-free appender updates
     private volatile Appender[] appendersArray = new Appender[0];
 
-    // Reusable StringBuilder for string formatting (thread-local for thread safety)
-    private static final ThreadLocal<StringBuilder> STRING_BUILDER_CACHE =
-            ThreadLocal.withInitial(() -> new StringBuilder(256));
+    // OPTIMIZATION 4: Enhanced thread-local caching
+    private static final ThreadLocal<ThreadLocalCache> THREAD_CACHE =
+            ThreadLocal.withInitial(ThreadLocalCache::new);
 
-    // OPTIMIZATION: Cache system line separator
-    private static final String LINE_SEPARATOR = System.lineSeparator();
+    // OPTIMIZATION 5: Logger instance caching with weak references to prevent memory leaks
+    private static final ConcurrentHashMap<String, WeakReference<Logger>> LOGGER_CACHE =
+            new ConcurrentHashMap<>();
 
-    // OPTIMIZATION: Logger instance caching
-    private static final ConcurrentHashMap<String, Logger> LOGGER_CACHE = new ConcurrentHashMap<>();
+    // OPTIMIZATION 6: Pre-calculated level strings to avoid enum.name() calls
+    private static final String[] LEVEL_STRINGS = new String[LogLevel.values().length];
+    static {
+        for (LogLevel level : LogLevel.values()) {
+            LEVEL_STRINGS[level.ordinal()] = level.name();
+        }
+    }
 
     // Private constructor
     private LogManager(boolean enabled, LogLevel minimumLevel, List<Appender> appenders, boolean asyncEnabled) {
         this.enabled = enabled;
         this.minimumLevel = minimumLevel;
         this.minimumLevelPriority = minimumLevel.getPriority();
-        this.dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
         this.appenders.addAll(appenders);
         this.asyncEnabled = asyncEnabled;
         updateAppendersArray();
 
-        // Initialize async processor if enabled
+        // Initialize async processor with optimized settings
         if (enabled && asyncEnabled) {
             this.asyncProcessor = new DisruptorAsyncLogProcessor();
             this.asyncProcessor.start();
@@ -78,42 +85,53 @@ public class LogManager {
     }
 
     /**
-     * DISRUPTOR-BASED ASYNC LOG PROCESSOR - Ultra-high performance with zero locking
+     * ENHANCED THREAD-LOCAL CACHE - Reduces object allocation
+     */
+    private static class ThreadLocalCache {
+        final StringBuilder stringBuilder = new StringBuilder(512); // Larger initial capacity
+        final char[] charBuffer = new char[256]; // For faster string operations
+        long lastTimestamp = -1;
+        String cachedTimestamp = null;
+
+        // OPTIMIZATION: Cache common log format components
+        String lastLoggerName = null;
+        String cachedLoggerPrefix = null; // Cache "[loggerName] - " part
+    }
+
+    /**
+     * ULTRA-OPTIMIZED DISRUPTOR PROCESSOR with better batching and wait strategy
      */
     private class DisruptorAsyncLogProcessor {
         private final Disruptor<DisruptorLogEvent> disruptor;
         private final RingBuffer<DisruptorLogEvent> ringBuffer;
-        private final EventHandler<DisruptorLogEvent> eventHandler;
         private final ExecutorService executor;
 
-        // Ring buffer size - must be power of 2
-        private static final int RING_BUFFER_SIZE = 8192; // 8K events
+        // OPTIMIZATION: Larger ring buffer and better wait strategy
+        private static final int RING_BUFFER_SIZE = 16384; // 16K events (power of 2)
 
         DisruptorAsyncLogProcessor() {
-            // Create single thread executor for event processing
+            // OPTIMIZATION: Custom thread factory with better thread settings
             this.executor = Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "DisruptorLogProcessor");
+                Thread t = new Thread(r, "OptimizedLogProcessor");
                 t.setDaemon(true);
-                t.setPriority(Thread.NORM_PRIORITY - 1); // Slightly lower priority
+                t.setPriority(Thread.NORM_PRIORITY - 1);
+                t.setUncaughtExceptionHandler((thread, ex) -> {
+                    System.err.println("Log processor thread error: " + ex.getMessage());
+                    ex.printStackTrace(System.err);
+                });
                 return t;
             });
 
-            // Create event handler that processes log events
-            this.eventHandler = new LogEventHandler();
-
-            // Create disruptor with factory and event handler
             this.disruptor = new Disruptor<>(
-                    DisruptorLogEvent::new,     // Event factory
-                    RING_BUFFER_SIZE,           // Ring buffer size
-                    executor,                   // Executor
-                    ProducerType.MULTI,         // Multiple producers (threads)
-                    new BlockingWaitStrategy()  // Wait strategy
+                    DisruptorLogEvent::new,
+                    RING_BUFFER_SIZE,
+                    executor,
+                    ProducerType.MULTI,
+                    // OPTIMIZATION: Better wait strategy for lower latency
+                    new SleepingWaitStrategy() // Better than BlockingWaitStrategy for most cases
             );
 
-            // Set event handler
-            this.disruptor.handleEventsWith(eventHandler);
-
-            // Get ring buffer reference
+            disruptor.handleEventsWith(new OptimizedLogEventHandler());
             this.ringBuffer = disruptor.getRingBuffer();
         }
 
@@ -123,21 +141,24 @@ public class LogManager {
 
         void shutdown() {
             try {
-                disruptor.shutdown(5, TimeUnit.SECONDS);
+                disruptor.shutdown(3, TimeUnit.SECONDS);
             } catch (TimeoutException e) {
                 disruptor.halt();
             }
             executor.shutdown();
+            try {
+                if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
+                    executor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                executor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
         }
 
-        /**
-         * Try to publish event without blocking
-         */
         boolean tryPublish(LogLevel level, String loggerName, String message, Throwable throwable) {
             try {
-                // Try to get next sequence number (non-blocking)
                 long sequence = ringBuffer.tryNext();
-
                 try {
                     DisruptorLogEvent event = ringBuffer.get(sequence);
                     event.setData(level, loggerName, message, throwable);
@@ -145,18 +166,12 @@ public class LogManager {
                     ringBuffer.publish(sequence);
                 }
                 return true;
-
             } catch (InsufficientCapacityException e) {
-                // Ring buffer is full
                 return false;
             }
         }
 
-        /**
-         * Force publish event (blocking if necessary)
-         */
         void forcePublish(LogLevel level, String loggerName, String message, Throwable throwable) {
-            // This will block if ring buffer is full
             long sequence = ringBuffer.next();
             try {
                 DisruptorLogEvent event = ringBuffer.get(sequence);
@@ -167,85 +182,97 @@ public class LogManager {
         }
 
         /**
-         * Event handler that processes log events
+         * OPTIMIZED EVENT HANDLER with better batching
          */
-        private class LogEventHandler implements EventHandler<DisruptorLogEvent> {
-            // Batch processing buffer
-            private final List<DisruptorLogEvent> batchBuffer = new ArrayList<>(256);
-            private static final int BATCH_SIZE = 256;
+        private class OptimizedLogEventHandler implements EventHandler<DisruptorLogEvent> {
+            // OPTIMIZATION: Larger batch size for better throughput
+            private final List<DisruptorLogEvent> batchBuffer = new ArrayList<>(512);
+            private static final int BATCH_SIZE = 512;
+            private static final int FORCE_FLUSH_THRESHOLD = 100; // Force flush after this many events
 
             @Override
             public void onEvent(DisruptorLogEvent event, long sequence, boolean endOfBatch) throws Exception {
-                // Add event to batch
-                batchBuffer.add(event.copy()); // Copy to avoid overwrite
+                // Create a copy to avoid data corruption
+                DisruptorLogEvent eventCopy = event.createCopy();
+                batchBuffer.add(eventCopy);
 
-                // Process batch when full or at end of batch
-                if (batchBuffer.size() >= BATCH_SIZE || endOfBatch) {
-                    processBatch(batchBuffer);
+                // OPTIMIZATION: Dynamic batching based on load
+                boolean shouldFlush = endOfBatch ||
+                        batchBuffer.size() >= BATCH_SIZE ||
+                        (batchBuffer.size() >= FORCE_FLUSH_THRESHOLD && System.nanoTime() % 100 == 0);
+
+                if (shouldFlush) {
+                    processBatch();
+                }
+            }
+
+            private void processBatch() {
+                if (batchBuffer.isEmpty()) return;
+
+                Appender[] currentAppenders = appendersArray;
+                if (currentAppenders.length == 0) {
+                    batchBuffer.clear();
+                    return;
+                }
+
+                try {
+                    // OPTIMIZATION: Pre-format all messages in batch
+                    String[] formattedMessages = new String[batchBuffer.size()];
+                    for (int i = 0; i < batchBuffer.size(); i++) {
+                        formattedMessages[i] = batchBuffer.get(i).getFormattedMessage();
+                    }
+
+                    // OPTIMIZATION: Process appenders in parallel only if beneficial
+                    if (currentAppenders.length == 1) {
+                        processSingleAppender(currentAppenders[0], formattedMessages);
+                    } else if (currentAppenders.length <= 4) {
+                        // For small number of appenders, sequential is often faster
+                        for (Appender appender : currentAppenders) {
+                            processSingleAppender(appender, formattedMessages);
+                        }
+                    } else {
+                        // Parallel processing for many appenders
+                        Arrays.stream(currentAppenders).parallel()
+                                .forEach(appender -> processSingleAppender(appender, formattedMessages));
+                    }
+                } finally {
                     batchBuffer.clear();
                 }
             }
 
-            private void processBatch(List<DisruptorLogEvent> events) {
-                if (events.isEmpty()) return;
-
-                // Get current appenders snapshot
-                Appender[] currentAppenders = appendersArray;
-                if (currentAppenders.length == 0) return;
-
-                // For single appender, skip parallel overhead
-                if (currentAppenders.length == 1) {
-                    Appender appender = currentAppenders[0];
-                    try {
-                        for (DisruptorLogEvent event : events) {
-                            String formattedMessage = event.getFormattedMessage();
-                            if (event.throwable != null) {
-                                appender.append(formattedMessage, event.throwable);
+            private void processSingleAppender(Appender appender, String[] formattedMessages) {
+                try {
+                    // OPTIMIZATION: Batch append if appender supports it
+                    if (appender instanceof BatchAppender) {
+                        ((BatchAppender) appender).appendBatch(formattedMessages,
+                                batchBuffer.stream().map(e -> e.throwable).toArray(Throwable[]::new));
+                    } else {
+                        // Fallback to individual appends
+                        for (int i = 0; i < formattedMessages.length; i++) {
+                            if (batchBuffer.get(i).throwable != null) {
+                                appender.append(formattedMessages[i], batchBuffer.get(i).throwable);
                             } else {
-                                appender.append(formattedMessage);
+                                appender.append(formattedMessages[i]);
                             }
                         }
-                    } catch (Throwable t) {
-                        handleAppenderError(appender, t);
                     }
-                    return;
+                } catch (Throwable t) {
+                    handleAppenderError(appender, t);
                 }
-
-                // Parallel processing for multiple appenders
-                Arrays.stream(currentAppenders).parallel().forEach(appender -> {
-                    try {
-                        for (DisruptorLogEvent event : events) {
-                            String formattedMessage = event.getFormattedMessage();
-                            if (event.throwable != null) {
-                                appender.append(formattedMessage, event.throwable);
-                            } else {
-                                appender.append(formattedMessage);
-                            }
-                        }
-                    } catch (Throwable t) {
-                        handleAppenderError(appender, t);
-                    }
-                });
             }
         }
 
-        /**
-         * Get ring buffer size for monitoring
-         */
         long getRemainingCapacity() {
             return ringBuffer.remainingCapacity();
         }
 
-        /**
-         * Check if ring buffer has available capacity
-         */
         boolean hasAvailableCapacity() {
-            return ringBuffer.remainingCapacity() > 0;
+            return ringBuffer.remainingCapacity() > RING_BUFFER_SIZE / 4; // 25% threshold
         }
     }
 
     /**
-     * DISRUPTOR LOG EVENT - Mutable and reusable for zero-garbage logging
+     * OPTIMIZED LOG EVENT with better memory usage
      */
     private static class DisruptorLogEvent {
         private LogLevel level;
@@ -253,7 +280,7 @@ public class LogManager {
         private String message;
         private Throwable throwable;
         private long timestamp;
-        private volatile String formattedMessage; // Lazy formatting
+        private volatile String formattedMessage;
 
         void setData(LogLevel level, String loggerName, String message, Throwable throwable) {
             this.level = level;
@@ -261,109 +288,90 @@ public class LogManager {
             this.message = message;
             this.throwable = throwable;
             this.timestamp = System.currentTimeMillis();
-            this.formattedMessage = null; // Reset cached formatted message
+            this.formattedMessage = null;
         }
 
-        /**
-         * Create a copy of this event (needed for batch processing)
-         */
-        DisruptorLogEvent copy() {
+        // OPTIMIZATION: More efficient copy method
+        DisruptorLogEvent createCopy() {
             DisruptorLogEvent copy = new DisruptorLogEvent();
             copy.level = this.level;
             copy.loggerName = this.loggerName;
             copy.message = this.message;
             copy.throwable = this.throwable;
             copy.timestamp = this.timestamp;
-            copy.formattedMessage = this.formattedMessage;
+            // Don't copy formatted message - let it be lazy-calculated
             return copy;
         }
 
         String getFormattedMessage() {
-            if (formattedMessage == null) {
+            String result = formattedMessage;
+            if (result == null) {
                 synchronized (this) {
-                    if (formattedMessage == null) {
-                        formattedMessage = formatMessage();
+                    result = formattedMessage;
+                    if (result == null) {
+                        formattedMessage = result = formatMessageOptimized();
                     }
                 }
             }
-            return formattedMessage;
+            return result;
         }
 
-        private String formatMessage() {
-            StringBuilder sb = STRING_BUILDER_CACHE.get();
+        private String formatMessageOptimized() {
+            ThreadLocalCache cache = THREAD_CACHE.get();
+            StringBuilder sb = cache.stringBuilder;
             sb.setLength(0);
 
-            // Build: [timestamp] LEVEL [loggerName] - message\n
-            sb.append('[');
-            sb.append(formatTimestamp(timestamp));
-            sb.append("] ");
-            sb.append(level.getLabel());
-            sb.append(" [");
-            sb.append(loggerName);
-            sb.append("] - ");
-            sb.append(message);
-            sb.append(LINE_SEPARATOR);
+            // OPTIMIZATION: Cache timestamp formatting
+            String timestampStr;
+            if (cache.lastTimestamp == timestamp && cache.cachedTimestamp != null) {
+                timestampStr = cache.cachedTimestamp;
+            } else {
+                timestampStr = formatTimestampFast(timestamp);
+                cache.lastTimestamp = timestamp;
+                cache.cachedTimestamp = timestampStr;
+            }
+
+            // OPTIMIZATION: Cache logger name prefix
+            String loggerPrefix;
+            if (loggerName.equals(cache.lastLoggerName) && cache.cachedLoggerPrefix != null) {
+                loggerPrefix = cache.cachedLoggerPrefix;
+            } else {
+                loggerPrefix = "] " + LEVEL_STRINGS[level.ordinal()] + " [" + loggerName + "] - ";
+                cache.lastLoggerName = loggerName;
+                cache.cachedLoggerPrefix = loggerPrefix;
+            }
+
+            // Build message: [timestamp] + loggerPrefix + message + newline
+            sb.append('[').append(timestampStr).append(loggerPrefix)
+                    .append(message).append(LINE_SEPARATOR);
 
             return sb.toString();
         }
     }
 
     /**
-     * OPTIMIZATION: Fast timestamp formatting with caching
+     * ULTRA-FAST timestamp formatting with multiple optimization layers
      */
-    private static final ThreadLocal<TimestampCache> TIMESTAMP_CACHE =
-            ThreadLocal.withInitial(TimestampCache::new);
-
-    private static String formatTimestamp(long timestamp) {
-        TimestampCache cache = TIMESTAMP_CACHE.get();
-
-        // Cache check
-        if (cache.lastTimestamp == timestamp && cache.formattedTimestamp != null) {
-            return cache.formattedTimestamp;
-        }
-
+    private static String formatTimestampFast(long timestamp) {
         try {
-            // Create LocalDateTime
-            LocalDateTime dateTime = LocalDateTime.ofInstant(
-                    java.time.Instant.ofEpochMilli(timestamp),
-                    SYSTEM_ZONE
+            // OPTIMIZATION: Direct conversion avoiding Instant creation
+            long epochSecond = timestamp / 1000;
+            int nanoAdjustment = (int) ((timestamp % 1000) * 1_000_000);
+
+            LocalDateTime dateTime = LocalDateTime.ofEpochSecond(
+                    epochSecond, nanoAdjustment, SYSTEM_ZONE.getRules().getOffset(Instant.ofEpochMilli(timestamp))
             );
 
-            // Format using static formatter
-            String formatted = dateTime.format(TIMESTAMP_FORMATTER);
-
-            // Cache the result
-            cache.formattedTimestamp = formatted;
-            cache.lastTimestamp = timestamp;
-
-            return formatted;
+            return dateTime.format(TIMESTAMP_FORMATTER);
 
         } catch (Exception e) {
-            // Fallback: Use simple date format
-            try {
-                java.util.Date date = new java.util.Date(timestamp);
-                java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
-                return sdf.format(date);
-            } catch (Exception fallbackException) {
-                // Ultimate fallback
-                return java.time.Instant.ofEpochMilli(timestamp).toString();
-            }
-        }
-    }
-
-    // Enhanced TimestampCache with validation
-    private static class TimestampCache {
-        long lastTimestamp = -1;
-        String formattedTimestamp = null;
-
-        // Add validation method
-        boolean isValid(long timestamp) {
-            return lastTimestamp == timestamp && formattedTimestamp != null;
+            // Fallback to simple format
+            return String.format("%tF %<tT.%<tL", timestamp);
         }
     }
 
     /**
-     * Update the cached appenders array
+     * OPTIMIZATION: Atomic appender array update
      */
     private void updateAppendersArray() {
         this.appendersArray = appenders.toArray(new Appender[0]);
@@ -382,7 +390,7 @@ public class LogManager {
 
     // Initialization methods
     public static void init(boolean enabled, LogLevel minimumLevel, List<Appender> appenders) {
-        init(enabled, minimumLevel, appenders, true); // Default to async
+        init(enabled, minimumLevel, appenders, true);
     }
 
     public static void init(boolean enabled, LogLevel minimumLevel, List<Appender> appenders, boolean asyncEnabled) {
@@ -420,50 +428,66 @@ public class LogManager {
     }
 
     public static LogManager getInstance() {
-        if (instance == null) {
+        LogManager result = instance;
+        if (result == null) {
             throw new IllegalStateException("LoggingService not initialized. Call init() first.");
         }
-        return instance;
-    }
-
-    public static Logger getLogger(Class<?> clazz) {
-        String name = clazz.getSimpleName();
-        return LOGGER_CACHE.computeIfAbsent(name, Logger::new);
-    }
-
-    public static Logger getLogger(String name) {
-        return LOGGER_CACHE.computeIfAbsent(name, Logger::new);
+        return result;
     }
 
     /**
-     * ULTRA-OPTIMIZED: Main logging method with Disruptor - zero locking in critical path
+     * OPTIMIZATION: Enhanced logger caching with weak references
+     */
+    public static Logger getLogger(Class<?> clazz) {
+        return getLogger(clazz.getSimpleName());
+    }
+
+    public static Logger getLogger(String name) {
+        WeakReference<Logger> ref = LOGGER_CACHE.get(name);
+        Logger logger = (ref != null) ? ref.get() : null;
+
+        if (logger == null) {
+            logger = new Logger(name);
+            LOGGER_CACHE.put(name, new WeakReference<>(logger));
+        }
+
+        return logger;
+    }
+
+    /**
+     * MAIN LOGGING METHOD - Maximum optimization
      */
     protected void writeLog(LogLevel level, String loggerName, String message) {
         writeLog(level, loggerName, message, null);
     }
 
     protected void writeLog(LogLevel level, String loggerName, String message, Throwable throwable) {
-        // OPTIMIZATION 1: Early exit with cached priority comparison
+        // OPTIMIZATION: Fastest possible early exit
         if (!enabled || level.getPriority() < minimumLevelPriority) {
             return;
         }
 
         if (asyncEnabled && asyncProcessor != null) {
-            // DISRUPTOR ASYNC PATH: Try to publish to ring buffer (lock-free)
+            // Try non-blocking publish first
             if (!asyncProcessor.tryPublish(level, loggerName, message, throwable)) {
-                // Ring buffer full - either drop or force (blocking)
-                // For high performance, you might choose to drop
-                // For reliability, force publish
-                asyncProcessor.forcePublish(level, loggerName, message, throwable);
+                // OPTIMIZATION: Smart backpressure handling
+                if (asyncProcessor.hasAvailableCapacity()) {
+                    // Buffer has some space, force publish
+                    asyncProcessor.forcePublish(level, loggerName, message, throwable);
+                } else {
+                    // Buffer is nearly full, drop message or use sync fallback
+                    // For ultra-high performance, consider dropping
+                    // For reliability, use sync fallback:
+                    processSyncLog(level, loggerName, message, throwable);
+                }
             }
         } else {
-            // SYNC PATH: Process immediately (fallback)
             processSyncLog(level, loggerName, message, throwable);
         }
     }
 
     /**
-     * Synchronous logging fallback
+     * OPTIMIZED synchronous logging
      */
     private void processSyncLog(LogLevel level, String loggerName, String message, Throwable throwable) {
         Appender[] currentAppenders = this.appendersArray;
@@ -471,11 +495,24 @@ public class LogManager {
             return;
         }
 
-        // Create temporary event for formatting
-        DisruptorLogEvent tempEvent = new DisruptorLogEvent();
-        tempEvent.setData(level, loggerName, message, throwable);
-        String formattedMessage = tempEvent.getFormattedMessage();
+        // Create formatted message once
+        String formattedMessage = formatMessageSync(level, loggerName, message);
 
+        // OPTIMIZATION: Unroll loop for single appender case
+        if (currentAppenders.length == 1) {
+            try {
+                if (throwable != null) {
+                    currentAppenders[0].append(formattedMessage, throwable);
+                } else {
+                    currentAppenders[0].append(formattedMessage);
+                }
+            } catch (Throwable t) {
+                handleAppenderError(currentAppenders[0], t);
+            }
+            return;
+        }
+
+        // Multiple appenders
         for (Appender appender : currentAppenders) {
             try {
                 if (throwable != null) {
@@ -489,14 +526,35 @@ public class LogManager {
         }
     }
 
-    private void handleAppenderError(Appender appender, Throwable t) {
-        System.err.println("Failed to append to " + appender.getName());
-        t.printStackTrace(System.err);
+    private String formatMessageSync(LogLevel level, String loggerName, String message) {
+        ThreadLocalCache cache = THREAD_CACHE.get();
+        StringBuilder sb = cache.stringBuilder;
+        sb.setLength(0);
+
+        long timestamp = System.currentTimeMillis();
+        String timestampStr;
+
+        if (cache.lastTimestamp == timestamp && cache.cachedTimestamp != null) {
+            timestampStr = cache.cachedTimestamp;
+        } else {
+            timestampStr = formatTimestampFast(timestamp);
+            cache.lastTimestamp = timestamp;
+            cache.cachedTimestamp = timestampStr;
+        }
+
+        sb.append('[').append(timestampStr).append("] ")
+                .append(LEVEL_STRINGS[level.ordinal()]).append(" [")
+                .append(loggerName).append("] - ")
+                .append(message).append(LINE_SEPARATOR);
+
+        return sb.toString();
     }
 
-    /**
-     * Configuration methods (still need locks for thread safety)
-     */
+    private void handleAppenderError(Appender appender, Throwable t) {
+        System.err.println("Failed to append to " + appender.getName() + ": " + t.getMessage());
+    }
+
+    // Configuration methods
     public void addAppender(Appender appender) {
         configLock.writeLock().lock();
         try {
@@ -505,7 +563,7 @@ public class LogManager {
                 appenders.add(appender);
                 updateAppendersArray();
             } catch (IOException e) {
-                System.err.println("Failed to initialize and add appender " + appender.getName() + ": " + e.getMessage());
+                System.err.println("Failed to initialize appender " + appender.getName() + ": " + e.getMessage());
             }
         } finally {
             configLock.writeLock().unlock();
@@ -525,13 +583,13 @@ public class LogManager {
         }
     }
 
-    public boolean isEnabled() {
-        return enabled;
+    // Getters and utility methods
+    public boolean isEnabled() { return enabled; }
+    public LogLevel getMinimumLevel() { return minimumLevel; }
+    public boolean isLogLevelEnabled(LogLevel level) {
+        return enabled && level.getPriority() >= minimumLevelPriority;
     }
-
-    public LogLevel getMinimumLevel() {
-        return minimumLevel;
-    }
+    public boolean isAsyncEnabled() { return asyncEnabled; }
 
     public List<Appender> getAppenders() {
         configLock.readLock().lock();
@@ -542,77 +600,89 @@ public class LogManager {
         }
     }
 
-    public boolean isLogLevelEnabled(LogLevel level) {
-        return enabled && level.getPriority() >= minimumLevelPriority;
-    }
-
-    public boolean isAsyncEnabled() {
-        return asyncEnabled;
-    }
-
-    /**
-     * Shutdown method to properly close async processor
-     */
     public void shutdown() {
         if (asyncProcessor != null) {
             asyncProcessor.shutdown();
         }
     }
 
+    public double getRingBufferUtilization() {
+        if (asyncProcessor != null) {
+            long remaining = asyncProcessor.getRemainingCapacity();
+            return 1.0 - (double) remaining / DisruptorAsyncLogProcessor.RING_BUFFER_SIZE;
+        }
+        return 0.0;
+    }
+
+    public boolean hasRingBufferCapacity() {
+        return asyncProcessor == null || asyncProcessor.hasAvailableCapacity();
+    }
+
     /**
-     * OPTIMIZATION: Bulk logging for high-throughput scenarios
+     * OPTIMIZATION: Enhanced bulk logging
      */
     public void bulkLog(List<LogEntry> entries) {
         if (!enabled || entries.isEmpty()) {
             return;
         }
 
+        // Pre-filter entries
+        List<LogEntry> validEntries = entries.stream()
+                .filter(entry -> entry.getLevel().getPriority() >= minimumLevelPriority)
+                .collect(Collectors.toList());
+
+        if (validEntries.isEmpty()) {
+            return;
+        }
+
         if (asyncEnabled && asyncProcessor != null) {
-            // Convert to individual publications to ring buffer
-            for (LogEntry entry : entries) {
-                if (entry.getLevel().getPriority() >= minimumLevelPriority) {
-                    asyncProcessor.tryPublish(entry.getLevel(), entry.getLoggerName(),
-                            entry.getMessage(), entry.getThrowable());
-                }
+            for (LogEntry entry : validEntries) {
+                asyncProcessor.tryPublish(entry.getLevel(), entry.getLoggerName(),
+                        entry.getMessage(), entry.getThrowable());
             }
         } else {
-            // Sync bulk processing
-            List<LogEntry> filteredEntries = entries.stream()
-                    .filter(entry -> entry.getLevel().getPriority() >= minimumLevelPriority)
-                    .collect(Collectors.toList());
+            processBulkSync(validEntries);
+        }
+    }
 
-            if (filteredEntries.isEmpty()) {
-                return;
-            }
+    private void processBulkSync(List<LogEntry> entries) {
+        Appender[] currentAppenders = this.appendersArray;
+        if (currentAppenders.length == 0) {
+            return;
+        }
 
-            Appender[] currentAppenders = this.appendersArray;
-            if (currentAppenders.length == 0) {
-                return;
-            }
+        // Pre-format all messages
+        String[] formattedMessages = new String[entries.size()];
+        for (int i = 0; i < entries.size(); i++) {
+            LogEntry entry = entries.get(i);
+            formattedMessages[i] = formatMessageSync(entry.getLevel(),
+                    entry.getLoggerName(), entry.getMessage());
+        }
 
-            for (Appender appender : currentAppenders) {
-                try {
-                    for (LogEntry entry : filteredEntries) {
-                        DisruptorLogEvent tempEvent = new DisruptorLogEvent();
-                        tempEvent.setData(entry.getLevel(), entry.getLoggerName(),
-                                entry.getMessage(), entry.getThrowable());
-                        String formatted = tempEvent.getFormattedMessage();
-                        if (entry.getThrowable() != null) {
-                            appender.append(formatted, entry.getThrowable());
+        // Send to appenders
+        for (Appender appender : currentAppenders) {
+            try {
+                if (appender instanceof BatchAppender) {
+                    Throwable[] throwables = entries.stream()
+                            .map(LogEntry::getThrowable)
+                            .toArray(Throwable[]::new);
+                    ((BatchAppender) appender).appendBatch(formattedMessages, throwables);
+                } else {
+                    for (int i = 0; i < formattedMessages.length; i++) {
+                        if (entries.get(i).getThrowable() != null) {
+                            appender.append(formattedMessages[i], entries.get(i).getThrowable());
                         } else {
-                            appender.append(formatted);
+                            appender.append(formattedMessages[i]);
                         }
                     }
-                } catch (Throwable t) {
-                    handleAppenderError(appender, t);
                 }
+            } catch (Throwable t) {
+                handleAppenderError(appender, t);
             }
         }
     }
 
-    /**
-     * LogEntry class for bulk operations
-     */
+    // LogEntry class for bulk operations
     public static class LogEntry {
         private final LogLevel level;
         private final String loggerName;
@@ -637,39 +707,9 @@ public class LogManager {
     }
 
     /**
-     * Wait for async processing to complete (for testing/shutdown)
+     * Interface for appenders that support batch operations
      */
-    public void waitForAsyncCompletion(long timeoutMs) throws InterruptedException {
-        if (asyncProcessor != null) {
-            long start = System.currentTimeMillis();
-            while (System.currentTimeMillis() - start < timeoutMs) {
-                if (asyncProcessor.getRemainingCapacity() == DisruptorAsyncLogProcessor.RING_BUFFER_SIZE) {
-                    Thread.sleep(10); // Give processor time to finish current batch
-                    if (asyncProcessor.getRemainingCapacity() == DisruptorAsyncLogProcessor.RING_BUFFER_SIZE) {
-                        return; // Ring buffer is empty and stayed empty
-                    }
-                }
-                Thread.sleep(10);
-            }
-            throw new InterruptedException("Timeout waiting for async logging completion");
-        }
-    }
-
-    /**
-     * Get ring buffer utilization for monitoring (0.0 = empty, 1.0 = full)
-     */
-    public double getRingBufferUtilization() {
-        if (asyncProcessor != null) {
-            long remaining = asyncProcessor.getRemainingCapacity();
-            return 1.0 - (double) remaining / DisruptorAsyncLogProcessor.RING_BUFFER_SIZE;
-        }
-        return 0.0;
-    }
-
-    /**
-     * Check if ring buffer has available capacity
-     */
-    public boolean hasRingBufferCapacity() {
-        return asyncProcessor == null || asyncProcessor.hasAvailableCapacity();
+    public interface BatchAppender {
+        void appendBatch(String[] messages, Throwable[] throwables) throws IOException;
     }
 }

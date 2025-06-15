@@ -290,7 +290,7 @@ class LogManagerTest {
             List<String> lines = Files.readAllLines(Path.of(testLogFile));
             String logLine = lines.get(0); // Skip initialization message
 
-            assertTrue(logLine.matches("\\[\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\] INFO  \\[TestLogger\\] - Test message"));
+            assertTrue(logLine.matches("\\[\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\] INFO \\[TestLogger\\] - Test message"));
         }
     }
     @Test

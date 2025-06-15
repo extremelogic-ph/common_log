@@ -15,8 +15,8 @@ import java.util.List;
  */
 public class LogManagerPerformanceTest {
 
-    private static final int TEST_MESSAGE_COUNT = 10_000;
-    private static final long MAX_ALLOWED_TIME_MS = 1000; // 1 second max for 10k messages
+    private static final int TEST_MESSAGE_COUNT = 500_000;
+    private static final long MAX_ALLOWED_TIME_MS = 1000; // 1 second max for 500k messages
 
     @BeforeEach
     void setUp() {

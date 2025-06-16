@@ -3,9 +3,7 @@ package ph.extremelogic.common.core.log;
 import com.lmax.disruptor.*;
 import com.lmax.disruptor.dsl.Disruptor;
 import com.lmax.disruptor.dsl.ProducerType;
-import ph.extremelogic.common.core.log.appender.Appender;
-import ph.extremelogic.common.core.log.appender.ConsoleAppender;
-import ph.extremelogic.common.core.log.appender.FileAppender;
+import ph.extremelogic.common.core.log.appender.*;
 
 import java.io.IOException;
 import java.lang.ref.WeakReference;
@@ -20,10 +18,30 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 
 public class LogManager {
+
+    // Shutdown state management
+    private final AtomicBoolean isShutdown = new AtomicBoolean(false);
+    private final AtomicBoolean isShuttingDown = new AtomicBoolean(false);
+
+    private final AtomicLong publishedEvents = new AtomicLong(0);
+    private final AtomicLong processedEvents = new AtomicLong(0);
+
+    static {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            // Give shutdown a name for debugging
+            Thread.currentThread().setName("LogManager-ShutdownHook");
+            LogManager instance = LogManager.instance;
+            if (instance != null) {
+                instance.shutdown();
+            }
+        }));
+    }
 
     private static volatile LogManager instance;
     private final boolean enabled;
@@ -106,6 +124,8 @@ public class LogManager {
         private final RingBuffer<DisruptorLogEvent> ringBuffer;
         private final ExecutorService executor;
 
+        private final AtomicBoolean processorShutdown = new AtomicBoolean(false);
+
         // OPTIMIZATION: Larger ring buffer and better wait strategy
         private static final int RING_BUFFER_SIZE = 16384; // 16K events (power of 2)
 
@@ -140,15 +160,44 @@ public class LogManager {
         }
 
         void shutdown() {
-            try {
-                disruptor.shutdown(3, TimeUnit.SECONDS);
-            } catch (TimeoutException e) {
-                disruptor.halt();
+            if (!processorShutdown.compareAndSet(false, true)) {
+                return; // Already shutdown
             }
+
+            try {
+                System.out.println("Disruptor shutdown starting...");
+
+                // Try graceful shutdown with timeout
+                try {
+                    disruptor.shutdown(3, TimeUnit.SECONDS);
+                    System.out.println("Disruptor shutdown completed gracefully.");
+                } catch (TimeoutException e) {
+                    System.out.println("Graceful shutdown timed out, forcing halt...");
+                    disruptor.halt();
+                } catch (Exception e) {
+                    System.err.println("Error during graceful shutdown, forcing halt: " + e.getMessage());
+                    disruptor.halt();
+                }
+
+            } catch (Exception e) {
+                System.err.println("Error during disruptor shutdown: " + e.getMessage());
+                disruptor.halt(); // Force stop
+            } finally {
+                shutdownExecutor();
+            }
+        }
+
+        private void shutdownExecutor() {
             executor.shutdown();
             try {
                 if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
+                    System.out.println("Executor didn't terminate gracefully, forcing shutdown...");
                     executor.shutdownNow();
+
+                    // Wait a bit more for forced shutdown
+                    if (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
+                        System.err.println("Executor did not terminate after forced shutdown");
+                    }
                 }
             } catch (InterruptedException e) {
                 executor.shutdownNow();
@@ -157,11 +206,16 @@ public class LogManager {
         }
 
         boolean tryPublish(LogLevel level, String loggerName, String message, Throwable throwable) {
+            if (processorShutdown.get()) {
+                return false;
+            }
+
             try {
                 long sequence = ringBuffer.tryNext();
                 try {
                     DisruptorLogEvent event = ringBuffer.get(sequence);
                     event.setData(level, loggerName, message, throwable);
+                    publishedEvents.incrementAndGet(); // Track published events
                 } finally {
                     ringBuffer.publish(sequence);
                 }
@@ -171,16 +225,21 @@ public class LogManager {
             }
         }
 
+        // Modify forcePublish method:
         void forcePublish(LogLevel level, String loggerName, String message, Throwable throwable) {
+            if (processorShutdown.get()) {
+                return;
+            }
+
             long sequence = ringBuffer.next();
             try {
                 DisruptorLogEvent event = ringBuffer.get(sequence);
                 event.setData(level, loggerName, message, throwable);
+                publishedEvents.incrementAndGet(); // Track published events
             } finally {
                 ringBuffer.publish(sequence);
             }
         }
-
         /**
          * OPTIMIZED EVENT HANDLER with better batching
          */
@@ -211,6 +270,8 @@ public class LogManager {
 
                 Appender[] currentAppenders = appendersArray;
                 if (currentAppenders.length == 0) {
+                    // Still count these as processed even if no appenders
+                    processedEvents.addAndGet(batchBuffer.size());
                     batchBuffer.clear();
                     return;
                 }
@@ -235,6 +296,7 @@ public class LogManager {
                         Arrays.stream(currentAppenders).parallel()
                                 .forEach(appender -> processSingleAppender(appender, formattedMessages));
                     }
+                    processedEvents.addAndGet(batchBuffer.size());
                 } finally {
                     batchBuffer.clear();
                 }
@@ -268,6 +330,13 @@ public class LogManager {
 
         boolean hasAvailableCapacity() {
             return ringBuffer.remainingCapacity() > RING_BUFFER_SIZE / 4; // 25% threshold
+        }
+        boolean isProcessingComplete() {
+            return publishedEvents.get() == processedEvents.get();
+        }
+
+        long getPendingEventCount() {
+            return publishedEvents.get() - processedEvents.get();
         }
     }
 
@@ -461,23 +530,23 @@ public class LogManager {
         writeLog(level, loggerName, message, null);
     }
 
+    /**
+     * Modified writeLog to respect shutdown state
+     */
     protected void writeLog(LogLevel level, String loggerName, String message, Throwable throwable) {
-        // OPTIMIZATION: Fastest possible early exit
-        if (!enabled || level.getPriority() < minimumLevelPriority) {
+        // OPTIMIZATION: Fastest possible early exits
+        if (!enabled ||
+                level.getPriority() < minimumLevelPriority ||
+                isShuttingDown.get()) { // Don't accept new logs during shutdown
             return;
         }
 
+        // Rest of your existing writeLog implementation...
         if (asyncEnabled && asyncProcessor != null) {
-            // Try non-blocking publish first
             if (!asyncProcessor.tryPublish(level, loggerName, message, throwable)) {
-                // OPTIMIZATION: Smart backpressure handling
                 if (asyncProcessor.hasAvailableCapacity()) {
-                    // Buffer has some space, force publish
                     asyncProcessor.forcePublish(level, loggerName, message, throwable);
                 } else {
-                    // Buffer is nearly full, drop message or use sync fallback
-                    // For ultra-high performance, consider dropping
-                    // For reliability, use sync fallback:
                     processSyncLog(level, loggerName, message, throwable);
                 }
             }
@@ -600,9 +669,126 @@ public class LogManager {
         }
     }
 
+    /**
+     * Comprehensive shutdown that handles all components in proper order
+     */
     public void shutdown() {
-        if (asyncProcessor != null) {
+        // Prevent multiple shutdown calls
+        if (!isShuttingDown.compareAndSet(false, true)) {
+            // Already shutting down, wait for completion
+            waitForShutdownCompletion();
+            return;
+        }
+
+        try {
+            System.out.println("LogManager shutdown initiated...");
+
+            // Step 1: Stop accepting new log entries
+            // (The isShuttingDown flag will be checked in writeLog)
+
+            // Step 2: Shutdown async processor first and wait for queue to drain
+            if (asyncProcessor != null) {
+                System.out.println("Shutting down async processor...");
+                shutdownAsyncProcessor();
+            }
+
+            // Step 3: Flush and close all appenders
+            System.out.println("Flushing and closing appenders...");
+            flushAndCloseAppenders();
+
+            // Step 4: Clear logger cache
+            LOGGER_CACHE.clear();
+
+            System.out.println("LogManager shutdown completed.");
+
+        } finally {
+            isShutdown.set(true);
+        }
+    }
+
+    /**
+     * Wait for shutdown to complete (for multiple shutdown calls)
+     */
+    private void waitForShutdownCompletion() {
+        long deadline = System.currentTimeMillis() + 10000; // 10 second timeout
+        while (!isShutdown.get() && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+    }
+
+    /**
+     * Enhanced async processor shutdown with proper queue draining
+     */
+    private void shutdownAsyncProcessor() {
+        if (asyncProcessor == null) return;
+
+        try {
+            // First, try graceful shutdown with timeout
+            System.out.println("Attempting graceful async processor shutdown...");
+
+            // Wait for current events to process (up to 5 seconds)
+            long deadline = System.currentTimeMillis() + 5000;
+            while (System.currentTimeMillis() < deadline) {
+                long remaining = asyncProcessor.getRemainingCapacity();
+                long totalCapacity = DisruptorAsyncLogProcessor.RING_BUFFER_SIZE;
+
+                // If buffer is mostly empty, we're probably done
+                if (remaining > totalCapacity * 0.95) {
+                    break;
+                }
+
+                try {
+                    Thread.sleep(50); // Small delay to allow processing
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+
+            // Now shutdown the disruptor
             asyncProcessor.shutdown();
+
+        } catch (Exception e) {
+            System.err.println("Error during async processor shutdown: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Flush and close all appenders properly
+     */
+    private void flushAndCloseAppenders() {
+        // Work with a snapshot to avoid concurrent modification
+        Appender[] currentAppenders = this.appendersArray;
+
+        for (Appender appender : currentAppenders) {
+            try {
+                System.out.println("Flushing appender: " + appender.getName());
+
+                // Flush the appender
+                if (appender instanceof FlushableAppender) {
+                    ((FlushableAppender) appender).flush();
+                } else if (appender instanceof FileAppender) {
+                    ((FileAppender) appender).flush();
+                }
+
+                // Close the appender
+                if (appender instanceof AutoCloseable) {
+                    ((AutoCloseable) appender).close();
+                } else if (appender instanceof CloseableAppender) {
+                    ((CloseableAppender) appender).close();
+                }
+
+            } catch (Exception e) {
+                // Don't let one appender failure stop others from closing
+                System.err.println("Error closing appender " + appender.getName() + ": " + e.getMessage());
+                e.printStackTrace();
+            }
         }
     }
 
@@ -711,5 +897,85 @@ public class LogManager {
      */
     public interface BatchAppender {
         void appendBatch(String[] messages, Throwable[] throwables) throws IOException;
+    }
+
+    /**
+     * Enhanced flush method that properly waits for async processing
+     */
+    public void flush() {
+        if (isShuttingDown.get()) {
+            return; // Don't flush during shutdown (it's handled there)
+        }
+
+        configLock.readLock().lock();
+        try {
+            // First, wait for async processor to drain if it exists
+            if (asyncProcessor != null) {
+                waitForAsyncProcessorToDrain(5000); // 5 second timeout
+            }
+
+            // Then flush all appenders
+            for (Appender appender : this.appenders) {
+                try {
+                    if (appender instanceof FlushableAppender) {
+                        ((FlushableAppender) appender).flush();
+                    } else if (appender instanceof FileAppender) {
+                        ((FileAppender) appender).flush();
+                    }
+                } catch (IOException e) {
+                    System.err.println("Error flushing appender " + appender.getName() + ": " + e.getMessage());
+                }
+            }
+        } finally {
+            configLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Wait for the async processor to process all pending events
+     */
+    private void waitForAsyncProcessorToDrain(long timeoutMs) {
+        if (asyncProcessor == null) return;
+
+        long deadline = System.currentTimeMillis() + timeoutMs;
+
+        while (System.currentTimeMillis() < deadline) {
+            // Check if all published events have been processed
+            if (asyncProcessor.isProcessingComplete()) {
+                // Wait a bit more for file I/O to complete
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+
+                // Double-check
+                if (asyncProcessor.isProcessingComplete()) {
+                    break;
+                }
+            }
+
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+
+        // Debug output
+        long pending = asyncProcessor.getPendingEventCount();
+        if (pending > 0) {
+            System.out.println("Warning: " + pending + " events still pending after flush timeout");
+        }
+    }
+
+    public boolean isShutdown() {
+        return isShutdown.get();
+    }
+
+    public boolean isShuttingDown() {
+        return isShuttingDown.get();
     }
 }

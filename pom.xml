@@ -5,11 +5,11 @@
 
     <groupId>ph.extremelogic</groupId>
     <artifactId>extremelogic-common-log</artifactId>
-    <version>0.0.2</version>
+    <version>0.0.1</version>
     <packaging>jar</packaging>
 
     <name>Extreme Logic Common Log</name>
-    <url>https:\\www.extremelogic.ph</url>
+    <url>https://www.extremelogic.ph</url>
     <description>Logger</description>
 
     <!-- SCM (Source Code Management) configuration -->
@@ -25,18 +25,6 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.jupiter.version>5.10.0</junit.jupiter.version>
     </properties>
-
-    <distributionManagement>
-        <snapshotRepository>
-            <id>ossrh</id>
-            <url>https://oss.sonatype.org/content/repositories/snapshots</url>
-        </snapshotRepository>
-        <repository>
-            <id>ossrh</id>
-            <url>https://oss.sonatype.org/service/local/staging/deploy/maven2</url>
-        </repository>
-    </distributionManagement>
-
 
     <dependencies>
         <!-- JUnit 5 -->
@@ -197,22 +185,50 @@
             </plugin>
 
             <!--
-            Close a staging repository on Sonatype OSSRH.
-            Validate that everything is in place.
-            Automatically release the repository (if autoReleaseAfterClose is true).
-
-            Reads credentials from settings.xml, specifically from the <servers> section
-            based on the serverId.
+                Maven Central requires both source JARs to be published alongside the main artifact.
+                These are used by consumers to browse source code and read documentation in IDEs or via search.maven.org.
+                Without them, deployment will fail with "Sources must be provided" and "Javadocs must be provided" errors.
             -->
             <plugin>
-                <groupId>org.sonatype.plugins</groupId>
-                <artifactId>nexus-staging-maven-plugin</artifactId>
-                <version>1.6.13</version>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.2.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+                Maven Central requires Javadoc JARs to be published alongside the main artifact.
+                These are used by consumers to browse source code and read documentation in IDEs or via search.maven.org.
+                Without them, deployment will fail with "Sources must be provided" and "Javadocs must be provided" errors.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.4.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>0.8.0</version>
                 <extensions>true</extensions>
                 <configuration>
-                    <serverId>ossrh</serverId>
-                    <nexusUrl>https://oss.sonatype.org/</nexusUrl>
-                    <autoReleaseAfterClose>false</autoReleaseAfterClose>
+                    <publishingServerId>ossrh</publishingServerId>
                 </configuration>
             </plugin>
 

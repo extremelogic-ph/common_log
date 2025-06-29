@@ -51,19 +51,6 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- Test containers for integration testing -->
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <version>1.19.0</version>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>com.lmax</groupId>
-            <artifactId>disruptor</artifactId>
-            <version>3.4.4</version>
-        </dependency>
     </dependencies>
 
     <build>
@@ -109,7 +96,6 @@
                                 If you want to include everything, omit the <includes> section entirely.
                                 -->
                                 <includes>
-                                    <include>org.yaml:snakeyaml</include>
                                     <!-- Include other dependencies as needed -->
                                 </includes>
                             </artifactSet>
@@ -121,9 +107,11 @@
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
 
                                 <!-- Modifies the JAR's MANIFEST.MF to specify the main class, enabling it to be executable -->
+                                <!--
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>ph.extremelogic.common.core.config.encrypt.DefaultPropertyEncryptor</mainClass>
                                 </transformer>
+                                -->
                             </transformers>
 
                             <filters>

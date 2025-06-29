@@ -1,202 +1,205 @@
 package ph.extremelogic.common.core.log;
 
-/**
- * Logger class that imitates SLF4J Logger interface
- */
-public class Logger {
+import ph.extremelogic.common.core.log.api.Level;
+import ph.extremelogic.common.core.log.appender.Appender;
+import ph.extremelogic.common.core.log.appender.ConsoleAppender;
+import ph.extremelogic.common.core.log.message.ParameterizedMessage;
+
+import java.util.concurrent.atomic.AtomicLong;
+
+public final class Logger {
+    private static final Object[] EMPTY_PARAMS = new Object[0];
+
+    // Pre-compute level checks to avoid enum comparisons
+    private static final int DEBUG_INT = Level.DEBUG.intLevel;
+    private static final int INFO_INT = Level.INFO.intLevel;
+    private static final int WARN_INT = Level.WARN.intLevel;
+    private static final int ERROR_INT = Level.ERROR.intLevel;
+    private static final int OFF_INT = Level.OFF.intLevel;
+
     private final String name;
+    private final Configuration configuration;
+    private final int minLevelInt;
+    private final AtomicLong processedEvents = new AtomicLong();
+    private final AtomicLong droppedEvents = new AtomicLong();
+    private final long startTime = System.nanoTime();
 
-    Logger(String name) {
+    // Cache appenders array to avoid list iteration
+    private volatile Appender[] appendersArray;
+
+    private static final ThreadLocal<ParameterizedMessage> MESSAGE_POOL =
+            ThreadLocal.withInitial(ParameterizedMessage::new);
+    private static final ThreadLocal<DefaultLogEvent> EVENT_POOL =
+            ThreadLocal.withInitial(DefaultLogEvent::new);
+
+    public Logger(String name, Configuration configuration) {
         this.name = name;
-    }
+        this.configuration = configuration;
+        this.minLevelInt = configuration.getRootLevel().intLevel;
 
-    // TRACE level methods
-    public void trace(String message) {
-        LogManager.getInstance().writeLog(LogLevel.TRACE, name, message);
-    }
-
-    public void trace(String format, Object arg) {
-        if (isTraceEnabled()) {
-            trace(format(format, arg));
+        // Only add default console appender if this is being used with the default configuration
+        // and no appenders were explicitly configured
+        if (configuration.getAppenders().isEmpty() && isDefaultConfiguration(configuration)) {
+            configuration.addAppender(new ConsoleAppender("console"));
         }
+
+        // Cache appenders as array for faster iteration
+        updateAppendersCache();
     }
 
-    public void trace(String format, Object arg1, Object arg2) {
-        if (isTraceEnabled()) {
-            trace(format(format, arg1, arg2));
-        }
+    public Logger(String name) {
+        this(name, LogManager.getLoggerContext().getConfiguration());
     }
 
-    public void trace(String format, Object... args) {
-        if (isTraceEnabled()) {
-            trace(format(format, args));
-        }
+    /**
+     * Check if this is the default configuration (created automatically by LogManager)
+     * vs an explicitly created configuration by the user
+     */
+    private boolean isDefaultConfiguration(Configuration config) {
+        // We can identify the default configuration by checking if LogManager was initialized
+        // If LogManager.initialize() was called explicitly, we should respect the user's choice
+        return !LogManager.wasExplicitlyInitialized();
     }
 
-    public void trace(String message, Throwable t) {
-        LogManager.getInstance().writeLog(LogLevel.TRACE, name, message, t);
+    private void updateAppendersCache() {
+        this.appendersArray = configuration.getAppenders().toArray(new Appender[0]);
     }
 
-    // DEBUG level methods
-    public void debug(String message) {
-        LogManager.getInstance().writeLog(LogLevel.DEBUG, name, message);
+    public boolean isLoggingEnabled() {
+        return minLevelInt < OFF_INT;
     }
 
-    public void debug(String format, Object arg) {
-        if (isDebugEnabled()) {
-            debug(format(format, arg));
-        }
+    public boolean isDebugEnabled() {
+        return minLevelInt <= DEBUG_INT;
     }
 
-    public void debug(String format, Object arg1, Object arg2) {
-        if (isDebugEnabled()) {
-            debug(format(format, arg1, arg2));
-        }
+    public boolean isInfoEnabled() {
+        return minLevelInt <= INFO_INT;
     }
 
-    public void debug(String format, Object... args) {
-        if (isDebugEnabled()) {
-            debug(format(format, args));
-        }
+    public boolean isWarnEnabled() {
+        return minLevelInt <= WARN_INT;
     }
 
-    public void debug(String message, Throwable t) {
-        LogManager.getInstance().writeLog(LogLevel.DEBUG, name, message, t);
+    public boolean isErrorEnabled() {
+        return minLevelInt <= ERROR_INT;
     }
 
-    // INFO level methods
     public void info(String message) {
-        LogManager.getInstance().writeLog(LogLevel.INFO, name, message);
-    }
-
-    public void info(String format, Object arg) {
-        if (isInfoEnabled()) {
-            info(format(format, arg));
-        }
-    }
-
-    public void info(String format, Object arg1, Object arg2) {
-        if (isInfoEnabled()) {
-            info(format(format, arg1, arg2));
+        if (minLevelInt <= INFO_INT) {
+            logDirectOptimized(INFO_INT, message, null);
         }
     }
 
     public void info(String format, Object... args) {
-        if (isInfoEnabled()) {
-            info(format(format, args));
+        if (minLevelInt <= INFO_INT) {
+            logFormattedOptimized(INFO_INT, format, args);
         }
     }
 
-    public void info(String message, Throwable t) {
-        LogManager.getInstance().writeLog(LogLevel.INFO, name, message, t);
-    }
-
-    // WARN level methods
     public void warn(String message) {
-        LogManager.getInstance().writeLog(LogLevel.WARN, name, message);
-    }
-
-    public void warn(String format, Object arg) {
-        if (isWarnEnabled()) {
-            warn(format(format, arg));
-        }
-    }
-
-    public void warn(String format, Object arg1, Object arg2) {
-        if (isWarnEnabled()) {
-            warn(format(format, arg1, arg2));
+        if (minLevelInt <= WARN_INT) {
+            logDirectOptimized(WARN_INT, message, null);
         }
     }
 
     public void warn(String format, Object... args) {
-        if (isWarnEnabled()) {
-            warn(format(format, args));
+        if (minLevelInt <= WARN_INT) {
+            logFormattedOptimized(WARN_INT, format, args);
         }
     }
 
-    public void warn(String message, Throwable t) {
-        LogManager.getInstance().writeLog(LogLevel.WARN, name, message, t);
-    }
-
-    // ERROR level methods
     public void error(String message) {
-        LogManager.getInstance().writeLog(LogLevel.ERROR, name, message);
-    }
-
-    public void error(String format, Object arg) {
-        if (isErrorEnabled()) {
-            error(format(format, arg));
-        }
-    }
-
-    public void error(String format, Object arg1, Object arg2) {
-        if (isErrorEnabled()) {
-            error(format(format, arg1, arg2));
-        }
-    }
-
-    public void error(String format, Object... args) {
-        if (isErrorEnabled()) {
-            error(format(format, args));
+        if (minLevelInt <= ERROR_INT) {
+            logDirectOptimized(ERROR_INT, message, null);
         }
     }
 
     public void error(String message, Throwable t) {
-        LogManager.getInstance().writeLog(LogLevel.ERROR, name, message, t);
+        if (minLevelInt <= ERROR_INT) {
+            logDirectOptimized(ERROR_INT, message, t);
+        }
     }
 
-    // Level check methods
-    public boolean isTraceEnabled() {
-        return LogManager.getInstance().minimumLevel.getPriority() <= LogLevel.TRACE.getPriority();
+    public void error(String format, Object... args) {
+        if (minLevelInt <= ERROR_INT) {
+            logFormattedOptimized(ERROR_INT, format, args);
+        }
     }
 
-    public boolean isDebugEnabled() {
-        return LogManager.getInstance().minimumLevel.getPriority() <= LogLevel.DEBUG.getPriority();
+    public void debug(String message) {
+        if (minLevelInt <= DEBUG_INT) {
+            logDirectOptimized(DEBUG_INT, message, null);
+        }
     }
 
-    public boolean isInfoEnabled() {
-        return LogManager.getInstance().minimumLevel.getPriority() <= LogLevel.INFO.getPriority();
+    public void debug(String format, Object... args) {
+        if (minLevelInt <= DEBUG_INT) {
+            logFormattedOptimized(DEBUG_INT, format, args);
+        }
     }
 
-    public boolean isWarnEnabled() {
-        return LogManager.getInstance().minimumLevel.getPriority() <= LogLevel.WARN.getPriority();
-    }
-
-    public boolean isErrorEnabled() {
-        return LogManager.getInstance().minimumLevel.getPriority() <= LogLevel.ERROR.getPriority();
-    }
-
-    // SLF4J-style parameterized message formatting
-    private String format(String format, Object... args) {
-        if (format == null) {
-            return null;
+    private void logDirectOptimized(int levelInt, String message, Throwable throwable) {
+        if (minLevelInt > levelInt) {
+            return;
         }
 
-        StringBuilder sb = new StringBuilder();
-        int argIndex = 0;
-        int lastIndex = 0;
-        int index;
-
-        while ((index = format.indexOf("{}", lastIndex)) != -1 && argIndex < args.length) {
-            sb.append(format.substring(lastIndex, index));
-            sb.append(args[argIndex] != null ? args[argIndex].toString() : "null");
-            argIndex++;
-            lastIndex = index + 2;
+        ParameterizedMessage msg = MESSAGE_POOL.get();
+        msg.setMessage(message);
+        if (throwable != null) {
+            msg.setThrowable(throwable);
         }
-        sb.append(format.substring(lastIndex));
 
-        // Append remaining arguments if any
-        if (argIndex < args.length) {
-            sb.append(" [");
-            for (; argIndex < args.length; argIndex++) {
-                sb.append(args[argIndex] != null ? args[argIndex].toString() : "null");
-                if (argIndex < args.length - 1) {
-                    sb.append(", ");
+        DefaultLogEvent event = EVENT_POOL.get();
+        event.resetFastWithLevel(name, levelInt, msg, throwable);
+        writeToAppendersOptimized(event);
+        msg.clear();
+    }
+
+    private void logFormattedOptimized(int levelInt, String format, Object... args) {
+        if (minLevelInt > levelInt) {
+            return;
+        }
+
+        ParameterizedMessage msg = MESSAGE_POOL.get();
+        msg.setMessage(format, args != null ? args : EMPTY_PARAMS);
+
+        DefaultLogEvent event = EVENT_POOL.get();
+        event.resetFastWithLevel(name, levelInt, msg, null);
+        writeToAppendersOptimized(event);
+        msg.clear();
+    }
+
+    private void writeToAppendersOptimized(LogEvent event) {
+        try {
+            Appender[] appenders = this.appendersArray;
+            for (int i = 0; i < appenders.length; i++) {
+                Appender appender = appenders[i];
+                if (appender.isStarted()) {
+                    appender.append(event);
                 }
             }
-            sb.append("]");
+            processedEvents.incrementAndGet();
+        } catch (Exception e) {
+            droppedEvents.incrementAndGet();
+            e.printStackTrace();
         }
+    }
 
-        return sb.toString();
+    public long getPendingEvents() { return 0; }
+    public long getProcessedEvents() { return processedEvents.get(); }
+    public long getDroppedEvents() { return droppedEvents.get(); }
+    public double getElapsedTimeSeconds() { return (System.nanoTime() - startTime) / 1_000_000_000.0; }
+
+    public void resetPerformanceCounters() {
+        processedEvents.set(0);
+        droppedEvents.set(0);
+    }
+
+    public void shutdown() {
+        Appender[] appenders = this.appendersArray;
+        for (int i = 0; i < appenders.length; i++) {
+            appenders[i].stop();
+        }
     }
 }

@@ -1,17 +1,52 @@
+## Deployment to Maven Central
 
+### Prerequisites
+1. Sonatype OSSRH account (for Maven Central deployment)
+2. GPG installed and configured on your system
+3. Maven 3.6.3 or higher
+4. Valid GPG key pair (public and private keys)
 
-## Build
+### Setup
 
-```shell
-mvn clean compile package shade:shade
+#### 1. Import GPG Keys
+```bash
+# Import your private key
+gpg --import private.key
+
+# Import your public key
+gpg --import public.key
+
+# Verify the keys were imported
+gpg --list-secret-keys
+gpg --list-public-keys
 ```
 
-## Performance
+#### 2.  Fix GPG TTY Issues (if needed)
 
-Messages per second: 6756756.756756756
+If you encounter the error gpg: signing failed: Inappropriate ioctl for device, run:
 
-Time to beat custom log4j
+```
+export GPG_TTY=$(tty)
+```
 
-Logged 500000 messages in 87ms
-Average time per message: 1.74E-4ms
-Messages per second: 5747126.436781609
+#### 3. Configure Maven settings.xml
+
+Add the following to your `~/.m2/settings.xml`:
+
+```xml
+<settings>
+  <servers>
+    <server>
+      <id>ossrh</id>
+      <username>your-sonatype-username</username>
+      <password>your-sonatype-password</password>
+    </server>
+  </servers>
+</settings>
+```
+
+#### 4. Deploy Command
+
+`mvn clean deploy -Dgpg.passphrase=your_passphrase`
+
+
